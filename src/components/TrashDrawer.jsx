@@ -30,6 +30,7 @@ export default function TrashDrawer({
   onClose,
   onRestore,
   onEmptyTrash,
+  isBusy,
 }) {
   const [restoreTargets, setRestoreTargets] = useState({});
 
@@ -52,7 +53,7 @@ export default function TrashDrawer({
   if (!isOpen) return null;
 
   return (
-    <div className="trash-backdrop" role="presentation" onClick={onClose}>
+    <div className="trash-backdrop" role="presentation" onClick={isBusy ? undefined : onClose}>
       <aside className="trash-drawer" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
         <div className="trash-header">
           <div>
@@ -60,16 +61,16 @@ export default function TrashDrawer({
             <h2>Trash</h2>
             <p>{taskCount} task{taskCount === 1 ? '' : 's'} in Trash. Tasks that have been in Trash more than 30 days will be automatically deleted.</p>
           </div>
-          <button className="modal-close-button trash-close" type="button" onClick={onClose} aria-label="Close trash">
+          <button className="modal-close-button trash-close" type="button" onClick={onClose} aria-label="Close trash" disabled={isBusy}>
             ×
           </button>
         </div>
 
         <div className="trash-actions">
-          <button type="button" className="danger" onClick={onEmptyTrash} disabled={taskCount === 0}>
-            Empty Trash
+          <button type="button" className="danger" onClick={onEmptyTrash} disabled={taskCount === 0 || isBusy}>
+            {isBusy ? 'Working…' : 'Empty Trash'}
           </button>
-          <button type="button" className="secondary" onClick={onClose}>
+          <button type="button" className="secondary" onClick={onClose} disabled={isBusy}>
             Back to Board
           </button>
         </div>
@@ -114,7 +115,7 @@ export default function TrashDrawer({
                     <select
                       value={targetColumnId}
                       onChange={(event) => setRestoreTargets((current) => ({ ...current, [task.id]: event.target.value }))}
-                      disabled={!hasColumns}
+                      disabled={!hasColumns || isBusy}
                     >
                       {columns.map((column) => (
                         <option key={column.id} value={column.id}>
@@ -122,8 +123,8 @@ export default function TrashDrawer({
                         </option>
                       ))}
                     </select>
-                    <button type="button" onClick={() => onRestore(task.id, targetColumnId)} disabled={!targetColumnId}>
-                      Restore
+                    <button type="button" onClick={() => onRestore(task.id, targetColumnId)} disabled={!targetColumnId || isBusy}>
+                      {isBusy ? 'Working…' : 'Restore'}
                     </button>
                   </div>
                 </article>

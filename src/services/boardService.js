@@ -158,6 +158,24 @@ export async function moveTask(taskId, newColumnId) {
   throwIfError(error);
 }
 
+export async function updateTaskPositions(tasks) {
+  const client = requireSupabase();
+
+  const updates = tasks.map((task, index) =>
+    client
+      .from('tasks')
+      .update({
+        column_id: task.column_id,
+        position: index + 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', task.id)
+  );
+
+  const results = await Promise.all(updates);
+  results.forEach((result) => throwIfError(result.error));
+}
+
 export async function trashTask(task, column) {
   const client = requireSupabase();
 

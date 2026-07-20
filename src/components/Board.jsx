@@ -9,9 +9,11 @@ export default function Board({
   onAddTask,
   onOpenTask,
   onMoveTask,
+  onReorderTask,
   onMoveColumn,
   onEditColumn,
   onDeleteColumn,
+  isBusy,
 }) {
   if (columns.length === 0) {
     return (
@@ -39,9 +41,11 @@ export default function Board({
               onAddTask={onAddTask}
               onOpenTask={onOpenTask}
               onMoveTask={onMoveTask}
+              onReorderTask={onReorderTask}
               onMoveColumn={onMoveColumn}
               onEditColumn={onEditColumn}
               onDeleteColumn={onDeleteColumn}
+              isBusy={isBusy}
             />
           );
         })}

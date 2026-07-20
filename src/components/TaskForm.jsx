@@ -8,7 +8,7 @@ const blankForm = {
   column_id: '',
 };
 
-export default function TaskForm({ isOpen, columns, defaultColumnId, onClose, onSubmit }) {
+export default function TaskForm({ isOpen, columns, defaultColumnId, isBusy, onClose, onSubmit }) {
   const [formData, setFormData] = useState(blankForm);
 
   useEffect(() => {
@@ -18,7 +18,7 @@ export default function TaskForm({ isOpen, columns, defaultColumnId, onClose, on
       ...blankForm,
       column_id: defaultColumnId || columns[0]?.id || '',
     });
-  }, [isOpen, defaultColumnId, columns]);
+  }, [isOpen, defaultColumnId]);
 
   if (!isOpen) return null;
 
@@ -27,14 +27,14 @@ export default function TaskForm({ isOpen, columns, defaultColumnId, onClose, on
     setFormData((current) => ({ ...current, [name]: value }));
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
 
     const cleanTitle = formData.title.trim();
     if (!cleanTitle) return;
     if (!formData.column_id) return;
 
-    onSubmit({
+    await onSubmit({
       ...formData,
       title: cleanTitle,
       description: formData.description.trim(),
@@ -44,14 +44,14 @@ export default function TaskForm({ isOpen, columns, defaultColumnId, onClose, on
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onClose}>
-      <section className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" role="presentation" onClick={isBusy ? undefined : onClose}>
+      <section className="modal-card task-create-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div>
             <p className="modal-kicker">New card</p>
             <h2>Add Task</h2>
           </div>
-          <button className="icon-button" onClick={onClose} type="button">
+          <button className="icon-button" onClick={onClose} type="button" disabled={isBusy}>
             Close
           </button>
         </div>
@@ -109,10 +109,10 @@ export default function TaskForm({ isOpen, columns, defaultColumnId, onClose, on
           </label>
 
           <div className="form-actions">
-            <button type="button" className="secondary" onClick={onClose}>
+            <button type="button" className="secondary" onClick={onClose} disabled={isBusy}>
               Cancel
             </button>
-            <button type="submit">Create Task</button>
+            <button type="submit" disabled={isBusy}>{isBusy ? 'Creating…' : 'Create Task'}</button>
           </div>
         </form>
       </section>

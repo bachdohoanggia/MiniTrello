@@ -5,13 +5,14 @@ export default function ConfirmDialog({
   confirmText = 'Confirm',
   cancelText = 'Cancel',
   variant = 'default',
+  isBusy = false,
   onConfirm,
   onCancel,
 }) {
   if (!isOpen) return null;
 
   return (
-    <div className="confirm-backdrop" role="presentation" onClick={onCancel}>
+    <div className="confirm-backdrop" role="presentation" onClick={isBusy ? undefined : onCancel}>
       <section
         className={`confirm-dialog ${variant === 'danger' ? 'is-danger' : ''}`}
         role="dialog"
@@ -30,16 +31,17 @@ export default function ConfirmDialog({
         </div>
 
         <div className="confirm-actions">
-          <button type="button" className="secondary" onClick={onCancel}>
+          <button type="button" className="secondary" onClick={onCancel} disabled={isBusy}>
             {cancelText}
           </button>
           <button
             type="button"
             className={variant === 'danger' ? 'danger' : ''}
             onClick={onConfirm}
+            disabled={isBusy}
             autoFocus
           >
-            {confirmText}
+            {isBusy ? 'Working…' : confirmText}
           </button>
         </div>
       </section>

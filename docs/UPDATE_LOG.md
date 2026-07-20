@@ -982,3 +982,69 @@ docs/BUG_FIX_LOG.md
 ```
 
 The document title and project references should use **MiniTrello**.
+
+---
+
+## v14 - Multi-user Draft Safety, Request Locking, Task Ordering, and UI Consistency
+
+### Problems fixed
+
+- Repeated clicks could send duplicate Supabase write requests before the first request completed.
+- Realtime updates replaced task objects and column arrays, which reset open forms while another user was typing.
+- Long columns could extend beyond the usable viewport instead of scrolling their own card list.
+- Tasks could move between columns but could not be reordered relative to other task cards.
+- The Add Task form used a white modal while Task Details used the dark workspace style.
+- Renaming a column still used the native browser `prompt()` UI.
+
+### Implementation
+
+- Added a shared mutation lock in `App.jsx`. All Supabase mutations now wait for the active mutation to finish, while related buttons, drag controls, confirmations, Trash actions, and label actions are disabled.
+- Debounced Supabase Realtime refresh events so a batch of row updates results in one board reload instead of a fetch storm.
+- Changed task form initialization so drafts reset only when a form is opened or a different task is selected. Normal Realtime refreshes no longer overwrite title, description, priority, due date, column, or new-label drafts.
+- Added `updateTaskPositions()` and drag/drop targets for ordering tasks within the same column or directly into a position in another column. Desktop and touch interactions use the same persisted `position` field.
+- Constrained each Kanban column to the current viewport and moved vertical scrolling into `.task-list`, keeping the column header and Add Task action visible.
+- Restyled the Add Task modal with the same dark palette and controls used by Task Details.
+- Added `ColumnEditModal.jsx` and removed the native column rename prompt.
+
+### Verification
+
+- Production Vite build completes successfully.
+- No application code uses `window.prompt()`, `window.alert()`, or `window.confirm()`.
+- Request controls expose disabled/loading states while Supabase writes are pending.
+
+---
+
+## v15 - Content-sized Columns and Floating Notifications
+
+### Column sizing
+
+- Columns now follow their content height by default. An empty column stays compact, and the column grows naturally as task cards are added.
+- A column is constrained only when its content would extend beyond the current device viewport.
+- Once that limit is reached, only the task list becomes vertically scrollable, while the column header and Add Task button remain visible.
+- Mobile uses a smaller viewport-aware limit to leave room for the responsive workspace header.
+
+### Notifications
+
+- Success and error messages no longer occupy space inside the board layout.
+- Toasts now float above the interface in the bottom-left corner with a blurred, macOS-style notification appearance.
+- Success notifications disappear automatically after 2.5 seconds; error notifications disappear after 4.5 seconds.
+- On small screens, notifications use the available width with equal left and right margins.
+
+---
+
+## v16 - Fixed Viewport Workspace
+
+### Page scroll behavior
+
+- Locked the document and app shell to the device viewport so the browser page itself no longer scrolls vertically.
+- The workspace header and label filter bar remain visible instead of being pushed above the screen by a long column.
+- The board now fills only the remaining space below the header and filters.
+- Horizontal overflow remains available on the board for additional columns.
+- Vertical overflow remains isolated to each long task list; short columns continue to fit their content naturally.
+
+### Layout implementation
+
+- `html`, `body`, and `#root` now occupy the full available height.
+- `.app-shell` uses a fixed viewport-height flex layout with document overflow disabled.
+- `.board-wrapper` is the flexible, min-height-safe remainder of the workspace.
+- `.board` provides a definite height so viewport-relative column limits work without hard-coded header offsets.

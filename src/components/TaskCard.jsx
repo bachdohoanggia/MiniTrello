@@ -30,7 +30,12 @@ function findColumnIdAtPoint(x, y) {
   return element?.closest?.('[data-column-id]')?.dataset?.columnId || null;
 }
 
-export default function TaskCard({ task, labels, taskLabels, onOpenTask, onMoveTask }) {
+function findTaskIdAtPoint(x, y) {
+  const element = document.elementFromPoint(x, y);
+  return element?.closest?.('[data-task-id]')?.dataset?.taskId || null;
+}
+
+export default function TaskCard({ task, labels, taskLabels, onOpenTask, onMoveTask, onReorderTask, isBusy }) {
   const priorityLabel = getPriorityLabel(task.priority);
   const dueDate = formatDueDate(task.due_date);
   const assignedLabels = getLabelsForTask(task, labels, taskLabels);
@@ -44,10 +49,43 @@ export default function TaskCard({ task, labels, taskLabels, onOpenTask, onMoveT
   });
 
   function handleDragStart(event) {
+    if (isBusy) {
+      event.preventDefault();
+      return;
+    }
     event.stopPropagation();
     event.dataTransfer.setData('application/taskflow', JSON.stringify({ type: 'task', taskId: task.id }));
     event.dataTransfer.effectAllowed = 'move';
     event.currentTarget.classList.add('is-dragging');
+  }
+
+  function handleDragOver(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isBusy) event.currentTarget.classList.add('is-task-drop-target');
+  }
+
+  function handleDragLeave(event) {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+      event.currentTarget.classList.remove('is-task-drop-target');
+    }
+  }
+
+  function handleDrop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.classList.remove('is-task-drop-target');
+    if (isBusy) return;
+
+    try {
+      const rawData = event.dataTransfer.getData('application/taskflow') || event.dataTransfer.getData('text/plain');
+      const dragData = rawData ? JSON.parse(rawData) : null;
+      if (dragData?.type === 'task' && dragData.taskId !== task.id) {
+        onReorderTask(dragData.taskId, task.id, task.column_id);
+      }
+    } catch {
+      // Ignore malformed drag data from outside the board.
+    }
   }
 
   function handleDragEnd(event) {
@@ -60,10 +98,13 @@ export default function TaskCard({ task, labels, taskLabels, onOpenTask, onMoveT
     document.querySelectorAll('.kanban-column.is-touch-drop-target').forEach((item) => {
       item.classList.remove('is-touch-drop-target');
     });
+    document.querySelectorAll('.task-card.is-task-drop-target').forEach((item) => {
+      item.classList.remove('is-task-drop-target');
+    });
   }
 
   function handlePointerDown(event) {
-    if (event.pointerType === 'mouse') return;
+    if (event.pointerType === 'mouse' || isBusy) return;
 
     touchDragRef.current = {
       pointerId: event.pointerId,
@@ -77,7 +118,7 @@ export default function TaskCard({ task, labels, taskLabels, onOpenTask, onMoveT
 
   function handlePointerMove(event) {
     const dragState = touchDragRef.current;
-    if (event.pointerType === 'mouse' || dragState.pointerId !== event.pointerId) return;
+    if (event.pointerType === 'mouse' || isBusy || dragState.pointerId !== event.pointerId) return;
 
     const distance = Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY);
     if (!dragState.isDragging && distance > 10) {
@@ -89,6 +130,7 @@ export default function TaskCard({ task, labels, taskLabels, onOpenTask, onMoveT
     if (dragState.isDragging) {
       event.preventDefault();
       const targetColumnId = findColumnIdAtPoint(event.clientX, event.clientY);
+      const targetTaskId = findTaskIdAtPoint(event.clientX, event.clientY);
       document.querySelectorAll('.kanban-column.is-touch-drop-target').forEach((item) => {
         item.classList.remove('is-touch-drop-target');
       });
@@ -96,18 +138,24 @@ export default function TaskCard({ task, labels, taskLabels, onOpenTask, onMoveT
       if (targetColumnId && targetColumnId !== task.column_id) {
         document.querySelector(`[data-column-id="${targetColumnId}"]`)?.classList.add('is-touch-drop-target');
       }
+      if (targetTaskId && targetTaskId !== task.id) {
+        document.querySelector(`[data-task-id="${targetTaskId}"]`)?.classList.add('is-task-drop-target');
+      }
     }
   }
 
   function handlePointerUp(event) {
     const dragState = touchDragRef.current;
-    if (event.pointerType === 'mouse' || dragState.pointerId !== event.pointerId) return;
+    if (event.pointerType === 'mouse' || isBusy || dragState.pointerId !== event.pointerId) return;
 
     if (dragState.isDragging) {
       event.preventDefault();
       ignoreNextClickRef.current = true;
       const targetColumnId = findColumnIdAtPoint(event.clientX, event.clientY);
-      if (targetColumnId && targetColumnId !== task.column_id) {
+      const targetTaskId = findTaskIdAtPoint(event.clientX, event.clientY);
+      if (targetTaskId && targetTaskId !== task.id && targetColumnId) {
+        onReorderTask(task.id, targetTaskId, targetColumnId);
+      } else if (targetColumnId && targetColumnId !== task.column_id) {
         onMoveTask(task.id, targetColumnId);
       }
     } else {
@@ -143,9 +191,13 @@ export default function TaskCard({ task, labels, taskLabels, onOpenTask, onMoveT
       ref={cardRef}
       className="task-card"
       data-task-card="true"
-      draggable="true"
+      data-task-id={task.id}
+      draggable={!isBusy}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}

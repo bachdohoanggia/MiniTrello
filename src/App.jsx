@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase, hasSupabaseConfig } from './supabaseClient';
 import Board from './components/Board.jsx';
 import ColumnForm from './components/ColumnForm.jsx';
@@ -6,6 +6,7 @@ import TaskForm from './components/TaskForm.jsx';
 import TaskDetailModal from './components/TaskDetailModal.jsx';
 import TrashDrawer from './components/TrashDrawer.jsx';
 import ConfirmDialog from './components/ConfirmDialog.jsx';
+import ColumnEditModal from './components/ColumnEditModal.jsx';
 import {
   createColumn,
   createLabel,
@@ -22,6 +23,7 @@ import {
   updateColumn,
   updateColumnPositions,
   updateTask,
+  updateTaskPositions,
 } from './services/boardService.js';
 
 function reorderItems(items, draggedId, targetId) {
@@ -51,6 +53,11 @@ export default function App() {
   const [selectedLabelIds, setSelectedLabelIds] = useState([]);
   const [isTrashOpen, setIsTrashOpen] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
+  const [editingColumn, setEditingColumn] = useState(null);
+  const [isMutating, setIsMutating] = useState(false);
+  const mutationLockRef = useRef(false);
+  const messageTimerRef = useRef(null);
+  const errorTimerRef = useRef(null);
 
   const [taskForm, setTaskForm] = useState({
     isOpen: false,
@@ -108,13 +115,20 @@ export default function App() {
   }
 
   const showMessage = (text) => {
+    window.clearTimeout(messageTimerRef.current);
+    window.clearTimeout(errorTimerRef.current);
+    setError('');
     setMessage(text);
-    window.setTimeout(() => setMessage(''), 2500);
+    messageTimerRef.current = window.setTimeout(() => setMessage(''), 2500);
   };
 
   const showError = (err) => {
     console.error(err);
+    window.clearTimeout(messageTimerRef.current);
+    window.clearTimeout(errorTimerRef.current);
+    setMessage('');
     setError(err.message || 'Something went wrong. Check the browser console.');
+    errorTimerRef.current = window.setTimeout(() => setError(''), 4500);
   };
 
   function requestConfirm(options) {
@@ -158,6 +172,26 @@ export default function App() {
     }
   }, []);
 
+  async function runMutation(action) {
+    if (mutationLockRef.current) return false;
+
+    mutationLockRef.current = true;
+    setIsMutating(true);
+    setError('');
+
+    try {
+      await action();
+      return true;
+    } catch (err) {
+      showError(err);
+      await loadBoard();
+      return false;
+    } finally {
+      mutationLockRef.current = false;
+      setIsMutating(false);
+    }
+  }
+
   useEffect(() => {
     async function initializeBoard() {
       if (!hasSupabaseConfig) {
@@ -180,40 +214,45 @@ export default function App() {
   useEffect(() => {
     if (!supabase) return undefined;
 
+    let refreshTimer;
+    const scheduleBoardRefresh = () => {
+      window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => loadBoard(), 120);
+    };
+
     const channel = supabase
       .channel('taskflow-board-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'columns' }, () => loadBoard())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, () => loadBoard())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'labels' }, () => loadBoard())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'task_labels' }, () => loadBoard())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'columns' }, scheduleBoardRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, scheduleBoardRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'labels' }, scheduleBoardRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'task_labels' }, scheduleBoardRefresh)
       .subscribe();
 
     return () => {
+      window.clearTimeout(refreshTimer);
       supabase.removeChannel(channel);
     };
   }, [loadBoard]);
 
   async function handleCreateColumn(name) {
-    try {
+    return runMutation(async () => {
       await createColumn(name);
       showMessage('Column added.');
       await loadBoard();
-    } catch (err) {
-      showError(err);
-    }
+    });
   }
 
-  async function handleEditColumn(column) {
-    const newName = window.prompt('New column name:', column.name);
-    if (!newName || !newName.trim()) return;
+  function handleEditColumn(column) {
+    if (!mutationLockRef.current) setEditingColumn(column);
+  }
 
-    try {
-      await updateColumn(column.id, { name: newName.trim() });
+  async function handleSaveColumn(column, newName) {
+    return runMutation(async () => {
+      await updateColumn(column.id, { name: newName });
       showMessage('Column updated.');
+      setEditingColumn(null);
       await loadBoard();
-    } catch (err) {
-      showError(err);
-    }
+    });
   }
 
   async function handleDeleteColumn(column) {
@@ -225,16 +264,14 @@ export default function App() {
     });
     if (!confirmed) return;
 
-    try {
+    return runMutation(async () => {
       await deleteColumnAndTrashTasks(column);
       showMessage('Column deleted. Its tasks moved to Trash.');
       if (selectedTask && selectedTask.column_id === column.id) {
         setSelectedTaskId(null);
       }
       await loadBoard();
-    } catch (err) {
-      showError(err);
-    }
+    });
   }
 
   async function handleMoveColumn(draggedColumnId, targetColumnId) {
@@ -243,17 +280,16 @@ export default function App() {
     const nextColumns = reorderItems(columns, draggedColumnId, targetColumnId);
     if (nextColumns === columns) return;
 
-    try {
+    return runMutation(async () => {
       setColumns(nextColumns);
       await updateColumnPositions(nextColumns);
       showMessage('Column moved.');
       await loadBoard();
-    } catch (err) {
-      showError(err);
-    }
+    });
   }
 
   function openCreateTaskForm(columnId) {
+    if (mutationLockRef.current) return;
     setTaskForm({
       isOpen: true,
       defaultColumnId: columnId,
@@ -276,34 +312,59 @@ export default function App() {
   }
 
   async function handleSubmitTask(formData) {
-    try {
+    return runMutation(async () => {
       await createTask(formData);
       showMessage('Task added.');
       closeTaskForm();
       await loadBoard();
-    } catch (err) {
-      showError(err);
-    }
+    });
   }
 
   async function handleSaveTask(taskId, formData) {
-    try {
+    return runMutation(async () => {
       await updateTask(taskId, formData);
       showMessage('Task updated.');
       await loadBoard();
-    } catch (err) {
-      showError(err);
-    }
+    });
   }
 
   async function handleMoveTask(taskId, newColumnId) {
-    try {
+    return runMutation(async () => {
       await moveTask(taskId, newColumnId);
       showMessage('Task moved.');
       await loadBoard();
-    } catch (err) {
-      showError(err);
-    }
+    });
+  }
+
+  async function handleReorderTask(draggedTaskId, targetTaskId, targetColumnId) {
+    if (draggedTaskId === targetTaskId) return false;
+
+    const draggedTask = tasks.find((task) => task.id === draggedTaskId);
+    const targetTask = tasks.find((task) => task.id === targetTaskId);
+    if (!draggedTask || !targetTask) return false;
+
+    const destinationTasks = tasks.filter(
+      (task) => task.column_id === targetColumnId && task.id !== draggedTaskId
+    );
+    const targetIndex = destinationTasks.findIndex((task) => task.id === targetTaskId);
+    if (targetIndex === -1) return false;
+
+    const movedTask = { ...draggedTask, column_id: targetColumnId };
+    destinationTasks.splice(targetIndex, 0, movedTask);
+
+    const sourceTasks = draggedTask.column_id === targetColumnId
+      ? []
+      : tasks.filter((task) => task.column_id === draggedTask.column_id && task.id !== draggedTaskId);
+
+    return runMutation(async () => {
+      setTasks((current) => current.map((task) => task.id === draggedTaskId ? movedTask : task));
+      await Promise.all([
+        updateTaskPositions(destinationTasks),
+        sourceTasks.length > 0 ? updateTaskPositions(sourceTasks) : Promise.resolve(),
+      ]);
+      showMessage('Task order updated.');
+      await loadBoard();
+    });
   }
 
   async function handleTrashTask(task) {
@@ -317,16 +378,14 @@ export default function App() {
 
     const currentColumn = columns.find((column) => column.id === task.column_id);
 
-    try {
+    return runMutation(async () => {
       await trashTask(task, currentColumn);
       showMessage('Task moved to Trash.');
       if (selectedTaskId === task.id) {
         setSelectedTaskId(null);
       }
       await loadBoard();
-    } catch (err) {
-      showError(err);
-    }
+    });
   }
 
   async function handleRestoreTask(taskId, columnId) {
@@ -335,13 +394,11 @@ export default function App() {
       return;
     }
 
-    try {
+    return runMutation(async () => {
       await restoreTask(taskId, columnId);
       showMessage('Task restored.');
       await loadBoard();
-    } catch (err) {
-      showError(err);
-    }
+    });
   }
 
   async function handleEmptyTrash() {
@@ -353,23 +410,19 @@ export default function App() {
     });
     if (!confirmed) return;
 
-    try {
+    return runMutation(async () => {
       await emptyTrash();
       showMessage('Trash emptied.');
       await loadBoard();
-    } catch (err) {
-      showError(err);
-    }
+    });
   }
 
   async function handleCreateLabel(label) {
-    try {
+    return runMutation(async () => {
       await createLabel(label);
       showMessage('Label added.');
       await loadBoard();
-    } catch (err) {
-      showError(err);
-    }
+    });
   }
 
   async function handleDeleteLabel(label) {
@@ -384,22 +437,18 @@ export default function App() {
     });
     if (!confirmed) return;
 
-    try {
+    return runMutation(async () => {
       await deleteLabel(labelId);
       showMessage('Label deleted.');
       await loadBoard();
-    } catch (err) {
-      showError(err);
-    }
+    });
   }
 
   async function handleToggleTaskLabel(taskId, labelId, isAssigned) {
-    try {
+    return runMutation(async () => {
       await toggleTaskLabel(taskId, labelId, isAssigned);
       await loadBoard();
-    } catch (err) {
-      showError(err);
-    }
+    });
   }
 
   return (
@@ -443,7 +492,7 @@ export default function App() {
             <strong>{trashTasks.length}</strong>
           </button>
 
-          <ColumnForm onCreateColumn={handleCreateColumn} />
+          <ColumnForm onCreateColumn={handleCreateColumn} isBusy={isMutating} />
         </div>
       </header>
 
@@ -514,9 +563,11 @@ export default function App() {
           onAddTask={openCreateTaskForm}
           onOpenTask={openTaskDetails}
           onMoveTask={handleMoveTask}
+          onReorderTask={handleReorderTask}
           onMoveColumn={handleMoveColumn}
           onEditColumn={handleEditColumn}
           onDeleteColumn={handleDeleteColumn}
+          isBusy={isMutating}
         />
       )}
 
@@ -526,6 +577,7 @@ export default function App() {
         defaultColumnId={taskForm.defaultColumnId}
         onClose={closeTaskForm}
         onSubmit={handleSubmitTask}
+        isBusy={isMutating}
       />
 
       <TaskDetailModal
@@ -539,6 +591,7 @@ export default function App() {
         onCreateLabel={handleCreateLabel}
         onDeleteLabel={handleDeleteLabel}
         onToggleTaskLabel={handleToggleTaskLabel}
+        isBusy={isMutating}
       />
 
       <TrashDrawer
@@ -550,6 +603,14 @@ export default function App() {
         onClose={() => setIsTrashOpen(false)}
         onRestore={handleRestoreTask}
         onEmptyTrash={handleEmptyTrash}
+        isBusy={isMutating}
+      />
+
+      <ColumnEditModal
+        column={editingColumn}
+        isBusy={isMutating}
+        onClose={() => setEditingColumn(null)}
+        onSave={handleSaveColumn}
       />
 
       <ConfirmDialog
@@ -559,6 +620,7 @@ export default function App() {
         confirmText={confirmDialog?.confirmText}
         cancelText={confirmDialog?.cancelText}
         variant={confirmDialog?.variant}
+        isBusy={isMutating}
         onCancel={() => closeConfirmDialog(false)}
         onConfirm={() => closeConfirmDialog(true)}
       />

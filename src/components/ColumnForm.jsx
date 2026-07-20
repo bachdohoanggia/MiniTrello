@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-export default function ColumnForm({ onCreateColumn }) {
+export default function ColumnForm({ onCreateColumn, isBusy }) {
   const [name, setName] = useState('');
 
   async function handleSubmit(event) {
@@ -8,8 +8,8 @@ export default function ColumnForm({ onCreateColumn }) {
     const cleanName = name.trim();
     if (!cleanName) return;
 
-    await onCreateColumn(cleanName);
-    setName('');
+    const created = await onCreateColumn(cleanName);
+    if (created) setName('');
   }
 
   return (
@@ -20,8 +20,9 @@ export default function ColumnForm({ onCreateColumn }) {
         onChange={(event) => setName(event.target.value)}
         placeholder="New column, e.g. Review"
         aria-label="New column name"
+        disabled={isBusy}
       />
-      <button type="submit">+ Add Column</button>
+      <button type="submit" disabled={isBusy}>{isBusy ? 'Adding…' : '+ Add Column'}</button>
     </form>
   );
 }

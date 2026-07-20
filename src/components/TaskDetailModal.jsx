@@ -48,6 +48,7 @@ export default function TaskDetailModal({
   onCreateLabel,
   onDeleteLabel,
   onToggleTaskLabel,
+  isBusy,
 }) {
   const [formData, setFormData] = useState(emptyTask);
   const [newLabelName, setNewLabelName] = useState('');
@@ -65,7 +66,7 @@ export default function TaskDetailModal({
     });
     setNewLabelName('');
     setNewLabelColor('#2563eb');
-  }, [task, columns]);
+  }, [task?.id]);
 
   const currentColumn = useMemo(
     () => columns.find((column) => column.id === formData.column_id),
@@ -108,10 +109,12 @@ export default function TaskDetailModal({
     const cleanName = newLabelName.trim();
     if (!cleanName) return;
 
-    await onCreateLabel({
+    const created = await onCreateLabel({
       name: cleanName,
       color: getLabelColorValue(newLabelColor),
     });
+
+    if (!created) return;
 
     setNewLabelName('');
     setNewLabelColor('#2563eb');
@@ -122,7 +125,7 @@ export default function TaskDetailModal({
   }
 
   return (
-    <div className="modal-backdrop task-detail-backdrop" role="presentation" onClick={onClose}>
+    <div className="modal-backdrop task-detail-backdrop" role="presentation" onClick={isBusy ? undefined : onClose}>
       <section className="task-detail-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
         <div className="task-detail-main">
           <div className="task-detail-title-line">
@@ -189,6 +192,7 @@ export default function TaskDetailModal({
                         className={`label-toggle ${isAssigned ? 'is-selected' : ''}`}
                         style={getLabelStyle(label.color)}
                         onClick={() => onToggleTaskLabel(task.id, label.id, isAssigned)}
+                        disabled={isBusy}
                         title={isAssigned ? 'Remove this label from the task' : 'Add this label to the task'}
                       >
                         {isAssigned ? '✓ ' : ''}{label.name}
@@ -199,6 +203,7 @@ export default function TaskDetailModal({
                         onClick={() => handleDeleteLabel(label)}
                         title={`Delete ${label.name} label`}
                         aria-label={`Delete ${label.name} label`}
+                        disabled={isBusy}
                       >
                         ×
                       </button>
@@ -226,7 +231,7 @@ export default function TaskDetailModal({
                 <span className="label-color-value">{newLabelColor}</span>
               </div>
 
-              <button type="submit">Add Label</button>
+              <button type="submit" disabled={isBusy}>{isBusy ? 'Working…' : 'Add Label'}</button>
             </form>
 
             <div className="label-color-presets" aria-label="Suggested label colors">
@@ -238,6 +243,7 @@ export default function TaskDetailModal({
                   style={{ backgroundColor: color }}
                   onClick={() => setNewLabelColor(color)}
                   aria-label={`Use ${color} as label color`}
+                  disabled={isBusy}
                 />
               ))}
             </div>
@@ -259,7 +265,7 @@ export default function TaskDetailModal({
         </div>
 
         <aside className="task-detail-side">
-          <button className="modal-close-button" type="button" onClick={onClose} aria-label="Close task details">
+          <button className="modal-close-button" type="button" onClick={onClose} aria-label="Close task details" disabled={isBusy}>
             ×
           </button>
 
@@ -290,13 +296,13 @@ export default function TaskDetailModal({
           </div>
 
           <div className="side-actions">
-            <button type="button" onClick={handleSubmit}>
-              Save Changes
+            <button type="button" onClick={handleSubmit} disabled={isBusy}>
+              {isBusy ? 'Saving…' : 'Save Changes'}
             </button>
-            <button type="button" className="danger" onClick={() => onDelete(task)}>
+            <button type="button" className="danger" onClick={() => onDelete(task)} disabled={isBusy}>
               Move to Trash
             </button>
-            <button type="button" className="secondary" onClick={onClose}>
+            <button type="button" className="secondary" onClick={onClose} disabled={isBusy}>
               Cancel
             </button>
           </div>

@@ -26,9 +26,11 @@ export default function Column({
   onAddTask,
   onOpenTask,
   onMoveTask,
+  onReorderTask,
   onMoveColumn,
   onEditColumn,
   onDeleteColumn,
+  isBusy,
 }) {
   const [isDragOver, setIsDragOver] = useState(false);
   const columnRef = useRef(null);
@@ -40,6 +42,10 @@ export default function Column({
   });
 
   function handleColumnDragStart(event) {
+    if (isBusy) {
+      event.preventDefault();
+      return;
+    }
     event.dataTransfer.setData('application/taskflow', JSON.stringify({ type: 'column', columnId: column.id }));
     event.dataTransfer.effectAllowed = 'move';
     event.currentTarget.closest('.kanban-column')?.classList.add('is-column-dragging');
@@ -50,7 +56,7 @@ export default function Column({
   }
 
   function handleColumnPointerDown(event) {
-    if (event.pointerType === 'mouse') return;
+    if (event.pointerType === 'mouse' || isBusy) return;
 
     touchColumnDragRef.current = {
       pointerId: event.pointerId,
@@ -64,7 +70,7 @@ export default function Column({
 
   function handleColumnPointerMove(event) {
     const dragState = touchColumnDragRef.current;
-    if (event.pointerType === 'mouse' || dragState.pointerId !== event.pointerId) return;
+    if (event.pointerType === 'mouse' || isBusy || dragState.pointerId !== event.pointerId) return;
 
     const distance = Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY);
     if (!dragState.isDragging && distance > 10) {
@@ -88,7 +94,7 @@ export default function Column({
 
   function handleColumnPointerUp(event) {
     const dragState = touchColumnDragRef.current;
-    if (event.pointerType === 'mouse' || dragState.pointerId !== event.pointerId) return;
+    if (event.pointerType === 'mouse' || isBusy || dragState.pointerId !== event.pointerId) return;
 
     if (dragState.isDragging) {
       event.preventDefault();
@@ -134,12 +140,12 @@ export default function Column({
     if (dragData.type === 'task') {
       const draggedTask = tasks.find((task) => task.id === dragData.taskId);
       if (draggedTask && draggedTask.column_id === column.id) return;
-      onMoveTask(dragData.taskId, column.id);
+      if (!isBusy) onMoveTask(dragData.taskId, column.id);
       return;
     }
 
     if (dragData.type === 'column' && dragData.columnId !== column.id) {
-      onMoveColumn(dragData.columnId, column.id);
+      if (!isBusy) onMoveColumn(dragData.columnId, column.id);
     }
   }
 
@@ -162,6 +168,7 @@ export default function Column({
             type="button"
             className="column-drag-handle"
             draggable="true"
+            disabled={isBusy}
             onDragStart={handleColumnDragStart}
             onDragEnd={handleColumnDragEnd}
             onPointerDown={handleColumnPointerDown}
@@ -180,16 +187,16 @@ export default function Column({
         </div>
 
         <div className="column-actions">
-          <button className="icon-button" onClick={() => onEditColumn(column)} title="Edit column">
+          <button className="icon-button" onClick={() => onEditColumn(column)} title="Edit column" disabled={isBusy}>
             Edit
           </button>
-          <button className="icon-button danger" onClick={() => onDeleteColumn(column)} title="Delete column">
+          <button className="icon-button danger" onClick={() => onDeleteColumn(column)} title="Delete column" disabled={isBusy}>
             Delete
           </button>
         </div>
       </div>
 
-      <button className="add-task-button" onClick={() => onAddTask(column.id)}>
+      <button className="add-task-button" onClick={() => onAddTask(column.id)} disabled={isBusy}>
         + Add Task
       </button>
 
@@ -205,6 +212,8 @@ export default function Column({
               taskLabels={taskLabels}
               onOpenTask={onOpenTask}
               onMoveTask={onMoveTask}
+              onReorderTask={onReorderTask}
+              isBusy={isBusy}
             />
           ))
         )}
