@@ -324,6 +324,7 @@ export default function App() {
     return runMutation(async () => {
       await updateTask(taskId, formData);
       showMessage('Task updated.');
+      setSelectedTaskId(null);
       await loadBoard();
     });
   }
