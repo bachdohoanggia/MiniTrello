@@ -9,6 +9,7 @@
 - Workspace Settings cannot demote or remove a global Super Admin.
 - Realtime uses the native Supabase `authenticated` JWT role and RLS.
 - Login Gmail changes through Google identity linking, with no transfer code.
+- Token refresh for the same Supabase UUID is silent when a tab regains focus.
 
 ## Supabase and Google setup
 
@@ -27,6 +28,11 @@
    this to attach a second Google identity to the current user.
 9. Run the complete destructive `supabase/schema.sql` once.
 
+If a production redirect falls back to localhost, the production `redirectTo`
+URL is missing from the Supabase Redirect URLs allow-list. Do not replace the
+Google Authorized redirect URI with the Vercel URL; Google must continue to use
+the Supabase `/auth/v1/callback` URL.
+
 ## Environment
 
 Only these browser variables are required:
@@ -42,18 +48,36 @@ or secret key.
 ## Gmail replacement
 
 1. The signed-in user opens Account Settings.
-2. **Connect another Google account** calls `supabase.auth.linkIdentity()`.
+2. **Connect new login Gmail** calls `supabase.auth.linkIdentity()`. In the Google
+   popup the user selects the new Gmail, not the current Gmail.
 3. Google redirects back to `/account`; both identities now point to one
    `auth.users.id`.
 4. The user selects the new Gmail.
-5. `select_google_login_identity(identity_id)` verifies that `auth.identities`
-   contains that Google identity for `auth.uid()`, then updates the public email and
-   avatar.
+5. The client sends Supabase `UserIdentity.identity_id` (not the provider-facing
+   `id`). `select_google_login_identity(identity_id)` compares it with
+   `auth.identities.id::text`, verifies ownership by `auth.uid()`, then updates the
+   public email and avatar.
 6. The client unlinks the old Google identity. Workspace and role foreign keys do
    not change because the Supabase user UUID never changed.
 
 Supabase refuses identity linking if the target Google account already belongs to
-another Supabase user. MiniTrello does not merge two active accounts.
+another Supabase user. MiniTrello does not merge two active accounts. Account
+Settings maps callback errors to explicit messages for selecting the current Gmail,
+selecting a Gmail owned by another MiniTrello account, or disabled manual linking.
+After a new identity is connected, the Step 1 button disappears and the UI directs
+the user to choose the Gmail to keep.
+
+## Session restoration and tab focus
+
+`AuthContext` bootstraps the profile once per real Supabase user UUID. Repeated
+`SIGNED_IN` or `TOKEN_REFRESHED` events for the same UUID update the session
+silently without calling `ensure_current_user()` again.
+
+`RootApp` keys workspace loading and its context channel by primitive values
+(`userId`, `profileId`, `routeName`, `workspaceId`) rather than session objects.
+Therefore returning to a tab does not clear `workspaceContext`, display
+**Loading MiniTrello**, or rebuild Realtime channels. Initial workspace entry,
+workspace switching and real account switching still use full-screen loading.
 
 ## Promote a Super Admin
 
@@ -82,7 +106,8 @@ Do not disconnect Firebase until Supabase Google login has worked locally.
 6. Remove `VITE_FIREBASE_*` variables from Vercel before the next deployment.
 7. In Supabase **Third-Party Auth**, delete the Firebase integration.
 8. In Firebase Console disable Google Authentication or delete the Firebase web app.
-   Delete the whole Firebase project only if nothing else uses it.
+   Keep the underlying Google Cloud project if it contains the OAuth client now
+   used by Supabase Google login.
 
 The repository no longer imports Firebase and no longer contains the Firebase npm
 package, client configuration or Third-Party JWT workaround.
@@ -99,3 +124,5 @@ package, client configuration or Third-Party JWT workaround.
 | Caller identity | `public.current_app_user()` → `auth.uid()` |
 | Super Admin authorization | `public.is_super_admin()` and workspace assertion helpers |
 | Realtime RLS | authenticated policies and `supabase_realtime` publication |
+| Silent same-user token refresh | prepared Supabase UUID in `src/AuthContext.jsx` |
+| Stable workspace loading | primitive UUID/route dependencies in `src/RootApp.jsx` |

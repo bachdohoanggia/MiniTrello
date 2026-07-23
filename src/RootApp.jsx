@@ -24,6 +24,10 @@ export default function RootApp() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const userId = user?.id || null;
+  const profileId = profile?.id || null;
+  const routeName = route.name;
+  const workspaceId = route.workspaceId || null;
 
   const navigate = useCallback((path) => {
     window.history.pushState({}, '', path);
@@ -39,37 +43,43 @@ export default function RootApp() {
 
   useEffect(() => {
     if (authLoading) return;
-    if (!user && route.name !== 'login') navigate('/login');
-    if (user && profile && route.name === 'login') navigate('/');
-  }, [authLoading, user, profile, route.name, navigate]);
+    if (!userId && routeName !== 'login') navigate('/login');
+    if (userId && profileId && routeName === 'login') navigate('/');
+  }, [authLoading, userId, profileId, routeName, navigate]);
 
   useEffect(() => {
     let cancelled = false;
-    setError(''); setWorkspaceContext(null);
-    if (!user || !profile || route.name !== 'workspace') return undefined;
+    setError('');
+    setWorkspaceContext(null);
+
+    if (!userId || !profileId || routeName !== 'workspace' || !workspaceId) {
+      setLoading(false);
+      return undefined;
+    }
+
     setLoading(true);
-    fetchWorkspaceContext(route.workspaceId)
+    fetchWorkspaceContext(workspaceId)
       .then((context) => { if (!cancelled) setWorkspaceContext(context); })
       .catch((err) => { if (!cancelled) setError(err.message || 'Unable to open this workspace.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [user, profile, route]);
+  }, [userId, profileId, routeName, workspaceId]);
 
   useEffect(() => {
-    if (!supabase || route.name !== 'workspace' || !profile) return undefined;
+    if (!supabase || routeName !== 'workspace' || !profileId || !workspaceId) return undefined;
     let refreshTimer;
     const refreshContext = () => {
       window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => {
-        fetchWorkspaceContext(route.workspaceId).then(setWorkspaceContext).catch((err) => setError(err.message));
+        fetchWorkspaceContext(workspaceId).then(setWorkspaceContext).catch((err) => setError(err.message));
       }, 120);
     };
     const channel = supabase
-      .channel(`workspace-context-${route.workspaceId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${route.workspaceId}` }, refreshContext)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${route.workspaceId}` }, refreshContext)
+      .channel(`workspace-context-${workspaceId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${workspaceId}` }, refreshContext)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${workspaceId}` }, refreshContext)
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'workspace_members' }, refreshContext)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'workspaces', filter: `id=eq.${route.workspaceId}` }, refreshContext)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'workspaces', filter: `id=eq.${workspaceId}` }, refreshContext)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'users' }, refreshContext)
       .subscribe((status, channelError) => {
         if (status === 'SUBSCRIBED') refreshContext();
@@ -79,7 +89,7 @@ export default function RootApp() {
         }
       });
     return () => { window.clearTimeout(refreshTimer); supabase.removeChannel(channel); };
-  }, [profile, route]);
+  }, [profileId, routeName, workspaceId]);
 
   const content = useMemo(() => {
     if (authLoading) return <PageState title="Restoring your session…" />;

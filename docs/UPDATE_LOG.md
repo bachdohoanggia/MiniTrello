@@ -1,6 +1,33 @@
 # MiniTrello - Feature and Bug Fix Log
 
-## v8 - Supabase Google Auth migration
+## v12 stabilization - production auth, Realtime and session UX
+
+- Added a neutral, responsive login experience for both new and returning users,
+  including a board preview and automatic-account-creation explanation.
+- Configured the desktop login view as one fixed viewport without scrolling while
+  retaining safe vertical scrolling on mobile.
+- Fixed Google login Gmail replacement by sending Supabase
+  `UserIdentity.identity_id` and comparing `auth.identities.id::text` in the RPC;
+  this resolves both `uuid = text` and false “identity not linked” failures.
+- Account Settings now hides the connection button after a second Gmail is linked
+  and explains the final selection step.
+- Added clear identity-linking errors for selecting the current Gmail, selecting a
+  Gmail owned by another MiniTrello account, and disabled manual linking.
+- Made repeated Supabase `SIGNED_IN`/`TOKEN_REFRESHED` events for the same UUID
+  update the session silently instead of rebuilding the public profile.
+- Changed workspace loader and Realtime-channel dependencies from session objects
+  to stable user/profile/workspace IDs. Returning to a tab no longer clears the
+  board or shows **Loading MiniTrello**.
+- Preserved full-screen loading for initial workspace entry, actual workspace
+  changes and real account changes. Realtime subscriptions remain event-driven and
+  no polling fallback was reintroduced.
+- Added Vercel production Site URL, Redirect URL, Google origin and environment
+  configuration guidance. A rejected production redirect no longer needs to fall
+  back to localhost once the allow-list is configured.
+- Consolidated documentation to one canonical file per topic and removed stale
+  ` 2.md` duplicates.
+
+## v12 - Supabase Google Auth migration
 
 - Replaced Firebase Authentication and Third-Party JWTs with Supabase Google Auth.
 - `public.users.id` now equals `auth.users.id`; RPCs and RLS derive identity from
@@ -23,7 +50,7 @@
 - The temporary Broadcast fallback was removed in v8 after authentication moved to
   native Supabase sessions.
 
-## v7 Login Gmail transfer (replaced in v8)
+## v12 Login Gmail transfer (replaced in v8)
 
 - Added hashed, expiring one-time transfer codes to the unified reset schema.
 - Account Settings can re-authenticate the current Google user, sign out, and let
@@ -35,7 +62,7 @@
 - Retains `users.id`, display name, workspaces, memberships and roles while replacing
   only Firebase UID, email and avatar.
 
-## v7 authentication and global Super Admin
+## v12 authentication and global Super Admin
 
 - Replaced URL-selected fake users with Firebase Google Authentication.
 - Added automatic Supabase profile creation from verified Firebase JWT claims.
@@ -49,13 +76,401 @@
 
 ---
 
-## High-level Summary
+## v11 - Multi-user Draft Safety, Request Locking, Task Ordering, and UI Consistency
 
-MiniTrello started as a simple React + Supabase Kanban board and gradually evolved into a more complete Trello-style task management app. The project moved from a basic three-column board into a dynamic board with movable columns, draggable tasks, custom labels, search and label filtering, Trash recovery, mobile drag support, and custom confirmation modals.
+### Problems fixed
 
-This log avoids tiny visual-only tweaks unless they affected usability. The focus is on real product behavior, data model changes, bug fixes, and implementation details.
+- Repeated clicks could send duplicate Supabase write requests before the first request completed.
+- Realtime updates replaced task objects and column arrays, which reset open forms while another user was typing.
+- Long columns could extend beyond the usable viewport instead of scrolling their own card list.
+- Tasks could move between columns but could not be reordered relative to other task cards.
+- The Add Task form used a white modal while Task Details used the dark workspace style.
+- Renaming a column still used the native browser `prompt()` UI.
+
+### Implementation
+
+- Added a shared mutation lock in `App.jsx`. All Supabase mutations now wait for the active mutation to finish, while related buttons, drag controls, confirmations, Trash actions, and label actions are disabled.
+- Debounced Supabase Realtime refresh events so a batch of row updates results in one board reload instead of a fetch storm.
+- Changed task form initialization so drafts reset only when a form is opened or a different task is selected. Normal Realtime refreshes no longer overwrite title, description, priority, due date, column, or new-label drafts.
+- Added `updateTaskPositions()` and drag/drop targets for ordering tasks within the same column or directly into a position in another column. Desktop and touch interactions use the same persisted `position` field.
+- Constrained each Kanban column to the current viewport and moved vertical scrolling into `.task-list`, keeping the column header and Add Task action visible.
+- Restyled the Add Task modal with the same dark palette and controls used by Task Details.
+- Added `ColumnEditModal.jsx` and removed the native column rename prompt.
+
+### Verification
+
+- Production Vite build completes successfully.
+- No application code uses `window.prompt()`, `window.alert()`, or `window.confirm()`.
+- Request controls expose disabled/loading states while Supabase writes are pending.
 
 ---
+
+
+## v10 - Replaced Browser Alerts with Custom Confirmation Modals
+
+### Features added
+
+- Replaced `alert()` and `confirm()` browser dialogs.
+- Added custom in-app confirmation modal.
+- Added background blur/dim overlay.
+- Added clear Cancel and Confirm buttons.
+- Applied custom confirmation to destructive actions:
+  - Move task to Trash
+  - Delete column
+  - Delete label
+  - Empty Trash
+
+### Problem: Browser alerts looked unprofessional
+
+Browser `alert()` and `confirm()` boxes did not match the app's design and felt jarring.
+
+### Concrete fix
+
+Created a reusable confirmation modal component.
+
+```jsx
+export default function ConfirmDialog({ open, title, message, confirmText, cancelText, danger, onConfirm, onCancel }) {
+  if (!open) return null;
+
+  return (
+    <div className="dialog-backdrop">
+      <section className="confirm-dialog">
+        <h2>{title}</h2>
+        <p>{message}</p>
+
+        <div className="dialog-actions">
+          <button className="secondary" onClick={onCancel}>{cancelText || 'Cancel'}</button>
+          <button className={danger ? 'danger' : ''} onClick={onConfirm}>
+            {confirmText || 'Confirm'}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+```
+
+Then destructive actions called a reusable confirm helper instead of browser `confirm()`.
+
+Before:
+
+```js
+if (!window.confirm('Delete this column?')) return;
+await deleteColumnSafely(column.id);
+```
+
+After:
+
+```js
+const confirmed = await confirm({
+  title: 'Delete column?',
+  message: 'Tasks inside this column will be moved to Trash first.',
+  confirmText: 'Delete Column',
+  danger: true
+});
+
+if (!confirmed) return;
+await deleteColumnSafely(column.id);
+```
+
+The overlay used CSS blur/dimming:
+
+```css
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(8px);
+  display: grid;
+  place-items: center;
+  z-index: 1000;
+}
+```
+
+### Result
+
+Confirmation dialogs became consistent with the MiniTrello design and destructive actions felt safer.
+
+---
+
+## Current MiniTrello Feature Set
+
+- React + Vite frontend.
+- Supabase Postgres database.
+- Supabase Realtime updates.
+- Dynamic custom columns.
+- Movable/reorderable columns.
+- Draggable tasks.
+- Mobile/touch drag support.
+- Task detail modal.
+- Optional priority.
+- Due dates.
+- Custom labels.
+- Custom label colors.
+- Delete labels.
+- Search by task title.
+- Multi-label filtering.
+- Trash/Bin system.
+- Restore from Trash.
+- Empty Trash.
+- App-side cleanup for Trash items older than 30 days.
+- Optional Supabase Cron setup for scheduled cleanup.
+- Custom confirmation modals.
+
+---
+
+## Important Technical Decisions
+
+### 1. Use `column_id`, not hard-coded status
+
+Instead of:
+
+```sql
+status text default 'todo'
+```
+
+MiniTrello uses:
+
+```sql
+column_id uuid references public.columns(id)
+```
+
+This allows unlimited custom columns.
+
+### 2. Use `position` fields for ordering
+
+Columns and tasks both need explicit order fields:
+
+```sql
+position integer not null default 0
+```
+
+Without this, the app cannot reliably remember the user's custom order.
+
+### 3. Use soft delete for tasks
+
+Instead of deleting immediately:
+
+```sql
+delete from public.tasks where id = '...';
+```
+
+MiniTrello moves tasks to Trash:
+
+```sql
+update public.tasks
+set deleted_at = now()
+where id = '...';
+```
+
+This makes deletion recoverable.
+
+### 4. Keep board cards compact
+
+Board cards should only show preview-level information:
+
+```text
+Title
+Priority badge
+Label chips
+Due date
+Description indicator
+```
+
+Full details belong in the modal.
+
+### 5. Use custom modals for destructive actions
+
+Custom modals keep the app professional and prevent the jarring default browser popup style.
+
+---
+
+## Suggested Future Improvements
+
+- Supabase Auth login.
+- Multiple boards.
+- Board members and sharing permissions.
+- Comments on tasks.
+- Activity history.
+- File attachments.
+- Drag task ordering inside a column.
+- Due date reminders.
+- Archive columns.
+- Dark mode.
+- Role-based permissions.
+
+---
+
+## Recommended File Location
+
+Place this file in the project as:
+
+```text
+docs/BUG_FIX_LOG.md
+```
+
+The document title and project references should use **MiniTrello**.
+
+---
+
+
+## v9 - Multi-Label Filtering and Mobile Drag Support
+
+### Features added
+
+- Multi-label filtering.
+- Mobile/touch drag support for tasks.
+- Mobile/touch drag support for columns.
+
+### Problem: Label filter only supported one label
+
+The app could only filter by one label at a time. The user wanted to select multiple labels such as `Work + Urgent`.
+
+### Concrete fix
+
+Changed state from one selected label to an array:
+
+```js
+// Before
+const [selectedLabelId, setSelectedLabelId] = useState(null);
+
+// After
+const [selectedLabelIds, setSelectedLabelIds] = useState([]);
+```
+
+Added toggle logic:
+
+```js
+function toggleLabelFilter(labelId) {
+  setSelectedLabelIds((current) =>
+    current.includes(labelId)
+      ? current.filter((id) => id !== labelId)
+      : [...current, labelId]
+  );
+}
+```
+
+Filtering used AND logic. A task must contain every selected label.
+
+```js
+const matchesSelectedLabels = selectedLabelIds.length === 0
+  ? true
+  : selectedLabelIds.every((labelId) =>
+      task.labels?.some((label) => label.id === labelId)
+    );
+```
+
+Final filtering combined search and labels:
+
+```js
+return matchesSearch && matchesSelectedLabels;
+```
+
+### Problem: Drag-and-drop did not work on phones
+
+HTML5 drag events work reasonably on desktop but often fail on mobile Safari/Chrome.
+
+### Concrete fix
+
+Added pointer-based drag handling. Pointer events work across mouse, touch, and stylus.
+
+Simplified pattern:
+
+```jsx
+<div
+  onPointerDown={(event) => startTouchDrag(event, task)}
+  onPointerMove={handleTouchDragMove}
+  onPointerUp={finishTouchDrag}
+>
+  {task.title}
+</div>
+```
+
+During pointer movement, the app tracked where the user was dragging and detected the column under the finger:
+
+```js
+const element = document.elementFromPoint(event.clientX, event.clientY);
+const columnElement = element?.closest('[data-column-id]');
+const targetColumnId = columnElement?.dataset.columnId;
+```
+
+On pointer release, the task or column was moved if the target was valid:
+
+```js
+if (targetColumnId && targetColumnId !== draggedTask.column_id) {
+  await moveTask(draggedTask.id, targetColumnId);
+}
+```
+
+### Result
+
+Users could drag tasks and columns on both desktop and mobile.
+
+---
+
+
+## v8 - Board-Level Label Filter Bar
+
+### Features added
+
+- Added a label filter bar under the toolbar.
+- Displayed all labels outside task cards.
+- Added `All tasks` filter.
+- Allowed search and label filtering to work together.
+
+### Problem: Labels existed but could not filter the board
+
+Labels were useful inside tasks, but there was no board-level way to quickly show only tasks with a specific label.
+
+### Concrete fix
+
+Added selected label state:
+
+```js
+const [selectedLabelId, setSelectedLabelId] = useState(null);
+```
+
+Rendered a filter bar:
+
+```jsx
+<button
+  className={!selectedLabelId ? 'label-filter-chip is-active' : 'label-filter-chip'}
+  onClick={() => setSelectedLabelId(null)}
+>
+  All tasks
+</button>
+
+{labels.map((label) => (
+  <button
+    key={label.id}
+    className={selectedLabelId === label.id ? 'label-filter-chip is-active' : 'label-filter-chip'}
+    onClick={() => setSelectedLabelId(label.id)}
+  >
+    {label.name}
+  </button>
+))}
+```
+
+Filtering logic combined search and label:
+
+```js
+const visibleTasks = tasks.filter((task) => {
+  const matchesSearch = task.title.toLowerCase().includes(searchQuery.toLowerCase());
+
+  const matchesLabel = selectedLabelId
+    ? task.labels?.some((label) => label.id === selectedLabelId)
+    : true;
+
+  return matchesSearch && matchesLabel;
+});
+```
+
+### Result
+
+Users could quickly filter by labels such as `Work`, `School`, or `Urgent` without opening individual tasks.
+
+---
+
 
 ## v1 - Initial React + Supabase Kanban MVP
 
@@ -223,71 +638,6 @@ Task cards became cleaner because ordinary tasks no longer displayed unnecessary
 
 ---
 
-## v3 - Removed Move Dropdown and Simplified Task Cards
-
-### Features / fixes added
-
-- Removed the `Move to` dropdown from task cards.
-- Made drag-and-drop the main method for moving tasks.
-- Moved the priority badge closer to the task title so important tasks were easier to scan.
-- Consolidated database setup into one `supabase/schema.sql` file.
-
-### Bug / issue: Move dropdown made cards look crowded
-
-Earlier versions had both drag-and-drop and a dropdown for moving tasks. That created duplicated behavior and made each task card look messy.
-
-### Concrete fix
-
-The dropdown logic was removed from `TaskCard.jsx`.
-
-Before:
-
-```jsx
-<select value={task.column_id} onChange={(event) => onMoveTask(task.id, event.target.value)}>
-  {columns.map((column) => (
-    <option key={column.id} value={column.id}>{column.name}</option>
-  ))}
-</select>
-```
-
-After:
-
-```jsx
-<article
-  className="task-card"
-  draggable
-  onDragStart={(event) => onTaskDragStart(event, task)}
-  onClick={() => onOpenTask(task)}
->
-  <div className="task-card-title-row">
-    <h3>{task.title}</h3>
-    {task.priority && <PriorityPill priority={task.priority} />}
-  </div>
-</article>
-```
-
-### Schema cleanup
-
-Instead of maintaining a base schema plus patch files, the database setup was merged into one file:
-
-```text
-supabase/schema.sql
-```
-
-The schema file used reset logic for clean development rebuilds:
-
-```sql
-drop table if exists public.task_labels cascade;
-drop table if exists public.labels cascade;
-drop table if exists public.tasks cascade;
-drop table if exists public.columns cascade;
-```
-
-### Result
-
-The board became visually cleaner and the setup process became easier: run one schema file instead of many patches.
-
----
 
 ## v4 - Trello-Style Task Detail Modal
 
@@ -620,506 +970,8 @@ Labels became manageable and customizable instead of being fixed to a small pres
 ---
 
 
-## v7 - Task Detail UI Refinement
 
-### Features / fixes added
 
-- Adjusted priority display inside the task detail modal.
-- Changed the Save Changes button to a clearer blue style.
-- Used stronger CSS specificity for priority text in the status panel.
 
-### Concrete CSS fix
 
-Priority display needed to override other inherited styles:
 
-```css
-.side-row strong.priority-text-low {
-  background: #ecfdf5 !important;
-  color: #047857 !important;
-}
-
-.side-row strong.priority-text-medium {
-  background: #fff7ed !important;
-  color: #c2410c !important;
-}
-
-.side-row strong.priority-text-high {
-  background: #fff1f2 !important;
-  color: #be123c !important;
-}
-```
-
-Save button became clearer:
-
-```css
-.side-actions button:not(.danger):not(.secondary) {
-  background: #2563eb;
-  color: #ffffff;
-  box-shadow: 0 14px 32px rgba(37, 99, 235, 0.26);
-}
-```
-
-### Result
-
-This was mostly a UI polish release, but it improved readability inside the task detail modal.
-
----
-
-## v8 - Board-Level Label Filter Bar
-
-### Features added
-
-- Added a label filter bar under the toolbar.
-- Displayed all labels outside task cards.
-- Added `All tasks` filter.
-- Allowed search and label filtering to work together.
-
-### Problem: Labels existed but could not filter the board
-
-Labels were useful inside tasks, but there was no board-level way to quickly show only tasks with a specific label.
-
-### Concrete fix
-
-Added selected label state:
-
-```js
-const [selectedLabelId, setSelectedLabelId] = useState(null);
-```
-
-Rendered a filter bar:
-
-```jsx
-<button
-  className={!selectedLabelId ? 'label-filter-chip is-active' : 'label-filter-chip'}
-  onClick={() => setSelectedLabelId(null)}
->
-  All tasks
-</button>
-
-{labels.map((label) => (
-  <button
-    key={label.id}
-    className={selectedLabelId === label.id ? 'label-filter-chip is-active' : 'label-filter-chip'}
-    onClick={() => setSelectedLabelId(label.id)}
-  >
-    {label.name}
-  </button>
-))}
-```
-
-Filtering logic combined search and label:
-
-```js
-const visibleTasks = tasks.filter((task) => {
-  const matchesSearch = task.title.toLowerCase().includes(searchQuery.toLowerCase());
-
-  const matchesLabel = selectedLabelId
-    ? task.labels?.some((label) => label.id === selectedLabelId)
-    : true;
-
-  return matchesSearch && matchesLabel;
-});
-```
-
-### Result
-
-Users could quickly filter by labels such as `Work`, `School`, or `Urgent` without opening individual tasks.
-
----
-
-## v9 - Multi-Label Filtering and Mobile Drag Support
-
-### Features added
-
-- Multi-label filtering.
-- Mobile/touch drag support for tasks.
-- Mobile/touch drag support for columns.
-
-### Problem: Label filter only supported one label
-
-The app could only filter by one label at a time. The user wanted to select multiple labels such as `Work + Urgent`.
-
-### Concrete fix
-
-Changed state from one selected label to an array:
-
-```js
-// Before
-const [selectedLabelId, setSelectedLabelId] = useState(null);
-
-// After
-const [selectedLabelIds, setSelectedLabelIds] = useState([]);
-```
-
-Added toggle logic:
-
-```js
-function toggleLabelFilter(labelId) {
-  setSelectedLabelIds((current) =>
-    current.includes(labelId)
-      ? current.filter((id) => id !== labelId)
-      : [...current, labelId]
-  );
-}
-```
-
-Filtering used AND logic. A task must contain every selected label.
-
-```js
-const matchesSelectedLabels = selectedLabelIds.length === 0
-  ? true
-  : selectedLabelIds.every((labelId) =>
-      task.labels?.some((label) => label.id === labelId)
-    );
-```
-
-Final filtering combined search and labels:
-
-```js
-return matchesSearch && matchesSelectedLabels;
-```
-
-### Problem: Drag-and-drop did not work on phones
-
-HTML5 drag events work reasonably on desktop but often fail on mobile Safari/Chrome.
-
-### Concrete fix
-
-Added pointer-based drag handling. Pointer events work across mouse, touch, and stylus.
-
-Simplified pattern:
-
-```jsx
-<div
-  onPointerDown={(event) => startTouchDrag(event, task)}
-  onPointerMove={handleTouchDragMove}
-  onPointerUp={finishTouchDrag}
->
-  {task.title}
-</div>
-```
-
-During pointer movement, the app tracked where the user was dragging and detected the column under the finger:
-
-```js
-const element = document.elementFromPoint(event.clientX, event.clientY);
-const columnElement = element?.closest('[data-column-id]');
-const targetColumnId = columnElement?.dataset.columnId;
-```
-
-On pointer release, the task or column was moved if the target was valid:
-
-```js
-if (targetColumnId && targetColumnId !== draggedTask.column_id) {
-  await moveTask(draggedTask.id, targetColumnId);
-}
-```
-
-### Result
-
-Users could drag tasks and columns on both desktop and mobile.
-
----
-
-## v10 - Replaced Browser Alerts with Custom Confirmation Modals
-
-### Features added
-
-- Replaced `alert()` and `confirm()` browser dialogs.
-- Added custom in-app confirmation modal.
-- Added background blur/dim overlay.
-- Added clear Cancel and Confirm buttons.
-- Applied custom confirmation to destructive actions:
-  - Move task to Trash
-  - Delete column
-  - Delete label
-  - Empty Trash
-
-### Problem: Browser alerts looked unprofessional
-
-Browser `alert()` and `confirm()` boxes did not match the app's design and felt jarring.
-
-### Concrete fix
-
-Created a reusable confirmation modal component.
-
-```jsx
-export default function ConfirmDialog({ open, title, message, confirmText, cancelText, danger, onConfirm, onCancel }) {
-  if (!open) return null;
-
-  return (
-    <div className="dialog-backdrop">
-      <section className="confirm-dialog">
-        <h2>{title}</h2>
-        <p>{message}</p>
-
-        <div className="dialog-actions">
-          <button className="secondary" onClick={onCancel}>{cancelText || 'Cancel'}</button>
-          <button className={danger ? 'danger' : ''} onClick={onConfirm}>
-            {confirmText || 'Confirm'}
-          </button>
-        </div>
-      </section>
-    </div>
-  );
-}
-```
-
-Then destructive actions called a reusable confirm helper instead of browser `confirm()`.
-
-Before:
-
-```js
-if (!window.confirm('Delete this column?')) return;
-await deleteColumnSafely(column.id);
-```
-
-After:
-
-```js
-const confirmed = await confirm({
-  title: 'Delete column?',
-  message: 'Tasks inside this column will be moved to Trash first.',
-  confirmText: 'Delete Column',
-  danger: true
-});
-
-if (!confirmed) return;
-await deleteColumnSafely(column.id);
-```
-
-The overlay used CSS blur/dimming:
-
-```css
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.48);
-  backdrop-filter: blur(8px);
-  display: grid;
-  place-items: center;
-  z-index: 1000;
-}
-```
-
-### Result
-
-Confirmation dialogs became consistent with the MiniTrello design and destructive actions felt safer.
-
----
-
-## Current MiniTrello Feature Set
-
-- React + Vite frontend.
-- Supabase Postgres database.
-- Supabase Realtime updates.
-- Dynamic custom columns.
-- Movable/reorderable columns.
-- Draggable tasks.
-- Mobile/touch drag support.
-- Task detail modal.
-- Optional priority.
-- Due dates.
-- Custom labels.
-- Custom label colors.
-- Delete labels.
-- Search by task title.
-- Multi-label filtering.
-- Trash/Bin system.
-- Restore from Trash.
-- Empty Trash.
-- App-side cleanup for Trash items older than 30 days.
-- Optional Supabase Cron setup for scheduled cleanup.
-- Custom confirmation modals.
-
----
-
-## Important Technical Decisions
-
-### 1. Use `column_id`, not hard-coded status
-
-Instead of:
-
-```sql
-status text default 'todo'
-```
-
-MiniTrello uses:
-
-```sql
-column_id uuid references public.columns(id)
-```
-
-This allows unlimited custom columns.
-
-### 2. Use `position` fields for ordering
-
-Columns and tasks both need explicit order fields:
-
-```sql
-position integer not null default 0
-```
-
-Without this, the app cannot reliably remember the user's custom order.
-
-### 3. Use soft delete for tasks
-
-Instead of deleting immediately:
-
-```sql
-delete from public.tasks where id = '...';
-```
-
-MiniTrello moves tasks to Trash:
-
-```sql
-update public.tasks
-set deleted_at = now()
-where id = '...';
-```
-
-This makes deletion recoverable.
-
-### 4. Keep board cards compact
-
-Board cards should only show preview-level information:
-
-```text
-Title
-Priority badge
-Label chips
-Due date
-Description indicator
-```
-
-Full details belong in the modal.
-
-### 5. Use custom modals for destructive actions
-
-Custom modals keep the app professional and prevent the jarring default browser popup style.
-
----
-
-## Suggested Future Improvements
-
-- Supabase Auth login.
-- Multiple boards.
-- Board members and sharing permissions.
-- Comments on tasks.
-- Activity history.
-- File attachments.
-- Drag task ordering inside a column.
-- Due date reminders.
-- Archive columns.
-- Dark mode.
-- Role-based permissions.
-
----
-
-## Recommended File Location
-
-Place this file in the project as:
-
-```text
-docs/BUG_FIX_LOG.md
-```
-
-The document title and project references should use **MiniTrello**.
-
----
-
-## v14 - Multi-user Draft Safety, Request Locking, Task Ordering, and UI Consistency
-
-### Problems fixed
-
-- Repeated clicks could send duplicate Supabase write requests before the first request completed.
-- Realtime updates replaced task objects and column arrays, which reset open forms while another user was typing.
-- Long columns could extend beyond the usable viewport instead of scrolling their own card list.
-- Tasks could move between columns but could not be reordered relative to other task cards.
-- The Add Task form used a white modal while Task Details used the dark workspace style.
-- Renaming a column still used the native browser `prompt()` UI.
-
-### Implementation
-
-- Added a shared mutation lock in `App.jsx`. All Supabase mutations now wait for the active mutation to finish, while related buttons, drag controls, confirmations, Trash actions, and label actions are disabled.
-- Debounced Supabase Realtime refresh events so a batch of row updates results in one board reload instead of a fetch storm.
-- Changed task form initialization so drafts reset only when a form is opened or a different task is selected. Normal Realtime refreshes no longer overwrite title, description, priority, due date, column, or new-label drafts.
-- Added `updateTaskPositions()` and drag/drop targets for ordering tasks within the same column or directly into a position in another column. Desktop and touch interactions use the same persisted `position` field.
-- Constrained each Kanban column to the current viewport and moved vertical scrolling into `.task-list`, keeping the column header and Add Task action visible.
-- Restyled the Add Task modal with the same dark palette and controls used by Task Details.
-- Added `ColumnEditModal.jsx` and removed the native column rename prompt.
-
-### Verification
-
-- Production Vite build completes successfully.
-- No application code uses `window.prompt()`, `window.alert()`, or `window.confirm()`.
-- Request controls expose disabled/loading states while Supabase writes are pending.
-
----
-
-## v15 - Content-sized Columns and Floating Notifications
-
-### Column sizing
-
-- Columns now follow their content height by default. An empty column stays compact, and the column grows naturally as task cards are added.
-- A column is constrained only when its content would extend beyond the current device viewport.
-- Once that limit is reached, only the task list becomes vertically scrollable, while the column header and Add Task button remain visible.
-- Mobile uses a smaller viewport-aware limit to leave room for the responsive workspace header.
-
-### Notifications
-
-- Success and error messages no longer occupy space inside the board layout.
-- Toasts now float above the interface in the bottom-left corner with a blurred, macOS-style notification appearance.
-- Success notifications disappear automatically after 2.5 seconds; error notifications disappear after 4.5 seconds.
-- On small screens, notifications use the available width with equal left and right margins.
-
----
-
-## v16 - Fixed Viewport Workspace
-
-### Page scroll behavior
-
-- Locked the document and app shell to the device viewport so the browser page itself no longer scrolls vertically.
-- The workspace header and label filter bar remain visible instead of being pushed above the screen by a long column.
-- The board now fills only the remaining space below the header and filters.
-- Horizontal overflow remains available on the board for additional columns.
-- Vertical overflow remains isolated to each long task list; short columns continue to fit their content naturally.
-
-### Layout implementation
-
-- `html`, `body`, and `#root` now occupy the full available height.
-- `.app-shell` uses a fixed viewport-height flex layout with document overflow disabled.
-- `.board-wrapper` is the flexible, min-height-safe remainder of the workspace.
-- `.board` provides a definite height so viewport-relative column limits work without hard-coded header offsets.
-
----
-
-## v17 - Multi-Workspace Fake-User Foundation
-
-### Behavior before this change
-
-- Every visitor opened the same global board because columns, tasks and labels had no workspace ownership.
-- There were no users, memberships, roles, account page or nested workspace URLs.
-- Anonymous RLS policies allowed anyone to write directly to every board table.
-
-### Data model and server changes
-
-- Rebuilt the schema around `users`, `roles`, `workspaces` and `workspace_members`.
-- Added `workspace_id` to columns, tasks and labels, plus triggers that reject cross-workspace task/column and task/label relationships.
-- Added membership/admin validation RPCs, transactional workspace create/join/member operations, and one workspace-scoped board command endpoint.
-- Added `seed_minitrello_demo()` with four deterministic fake users, two workspaces and board fixtures.
-- Preserved Realtime reads for the fake-user phase while revoking anonymous direct writes; the seed function is not exposed to the client.
-
-### Frontend changes
-
-- Added dependency-free routes for user selection, dashboard, My Account and UUID-based workspace boards.
-- Added workspace creation, code joining, workspace switching and direct-route validation.
-- Added Workspace Settings with join-code copy, member list, admin/member roles, add by UUID, promote, demote and kick.
-- Added admin-only permanent workspace deletion with exact-name confirmation and cascading cleanup of board data and memberships.
-- Scoped every board service call and Realtime board refresh to the active workspace.
-- Added membership Realtime handling so role changes and kicks update active clients.
-- Added a Vercel SPA rewrite so direct workspace URLs survive refresh.
-
-### Deferred security work
-
-Fake user IDs can be impersonated because they come from the URL. Gmail login, email changes, `auth.uid()` identity and private membership RLS are intentionally deferred to the next authentication phase.

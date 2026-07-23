@@ -1,6 +1,7 @@
-# TaskFlow Board
+# MiniTrello
 
-TaskFlow Board is a multi-workspace Trello-style Kanban app built with React and Supabase.
+MiniTrello is a multi-workspace Trello-style Kanban app built with React and
+Supabase Auth, PostgreSQL, RPCs, RLS and Realtime.
 
 ## Features
 
@@ -24,6 +25,8 @@ TaskFlow Board is a multi-workspace Trello-style Kanban app built with React and
 - Google sign-in through Supabase Auth
 - Workspace admin/member roles and a global Super Admin role
 - Change the Google login Gmail while retaining the same MiniTrello UUID, workspaces and roles
+- Silent Supabase token refresh when returning to a browser tab
+- Production-ready Google OAuth redirects for local and Vercel environments
 
 ## Important note about Trash
 
@@ -47,13 +50,21 @@ Paste and run the full SQL file from:
 supabase/schema.sql
 ```
 
-This destructive v8 schema resets existing MiniTrello data and creates the authenticated workspace model, RPCs, RLS policies, and Realtime publication.
+This destructive v8 schema resets existing MiniTrello data and creates the
+authenticated workspace model, RPCs, RLS policies, and Realtime publication.
+It resets `public.*` application data but does not delete existing Supabase
+`auth.users`.
 
 - `columns`
 - `tasks`
 - `labels`
 - `task_labels`
-In Supabase, enable Google under **Authentication → Sign In / Providers → Supabase Auth** and configure the Google OAuth Client ID and Client Secret. Also enable manual identity linking so users can replace their login Gmail without changing their MiniTrello UUID. See `docs/AUTH_SUPER_ADMIN.md` for the complete order.
+
+In Supabase, enable Google under **Authentication → Sign In / Providers →
+Supabase Auth** and configure the Google OAuth Client ID and Client Secret. Also
+enable manual identity linking so users can replace their login Gmail without
+changing their MiniTrello UUID. See `docs/AUTH_SUPER_ADMIN.md` for the complete
+order.
 
 ## Environment variables
 
@@ -102,6 +113,34 @@ In Vercel project settings, add the same environment variables:
 VITE_SUPABASE_URL=your_supabase_project_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_public_key
 ```
+
+In Supabase **Authentication → URL Configuration**:
+
+- Set **Site URL** to the exact production URL, for example
+  `https://minitrello.vercel.app`.
+- Add `http://localhost:5173/**` and
+  `https://minitrello.vercel.app/**` to Redirect URLs.
+
+In the Google OAuth web client:
+
+- Keep the Supabase callback URL as the Authorized redirect URI.
+- Add both the local and production origins under Authorized JavaScript origins.
+
+Environment-variable changes apply only to a new Vercel deployment. Never place
+the Google Client Secret, downloaded OAuth JSON or a Supabase service-role key in
+Git or Vercel frontend variables.
+
+## Realtime behavior
+
+Mutations go through authenticated PostgreSQL RPCs. The schema publishes
+`users`, `workspaces`, `workspace_members`, `columns`, `tasks`, `labels` and
+`task_labels` to `supabase_realtime`. React subscribes to Postgres Changes over a
+Supabase Realtime WebSocket and performs a short debounced fetch after each event.
+
+There is no polling or 1.5-second auto reload. Returning to a browser tab may
+refresh the Supabase token, but the same user UUID updates silently and does not
+reload the board. Full-screen loading is reserved for the first workspace open,
+an actual workspace switch or a real account change.
 
 ## Auto-delete Trash after 30 days
 
