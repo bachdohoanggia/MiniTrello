@@ -2223,6 +2223,7 @@ button:disabled:hover {
   background: #eef2ff;
   color: #312e81;
   box-shadow: 0 16px 36px rgba(79, 70, 229, 0.14);
+  transform: none;
 }
 
 .workspace-card:hover:not(:disabled) small { color: #6366f1; }
