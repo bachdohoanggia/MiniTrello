@@ -363,6 +363,7 @@ returns jsonb language plpgsql security definer set search_path = public as $$
 declare actor uuid := public.current_app_user(); new_workspace public.workspaces;
 begin
   if length(trim(p_name)) = 0 then raise exception 'Workspace name is required'; end if;
+  if length(trim(p_name)) > 100 then raise exception 'Workspace name must be 100 characters or fewer'; end if;
   insert into public.workspaces(name, join_code, created_by)
   values (trim(p_name), public.generate_workspace_code(), actor) returning * into new_workspace;
   insert into public.workspace_members(workspace_id, user_id, role_key)
@@ -373,6 +374,24 @@ begin
     (new_workspace.id, 'School', '#2563eb'), (new_workspace.id, 'Work', '#7c3aed'),
     (new_workspace.id, 'Urgent', '#e11d48'), (new_workspace.id, 'Personal', '#16a34a');
   return to_jsonb(new_workspace);
+end;
+$$;
+
+create or replace function public.rename_workspace(p_workspace_id uuid, p_name text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare updated_workspace public.workspaces;
+begin
+  perform public.assert_workspace_admin_or_super_admin(p_workspace_id);
+  if length(trim(coalesce(p_name, ''))) = 0 then raise exception 'Workspace name is required'; end if;
+  if length(trim(p_name)) > 100 then raise exception 'Workspace name must be 100 characters or fewer'; end if;
+
+  update public.workspaces
+  set name = trim(p_name)
+  where id = p_workspace_id
+  returning * into updated_workspace;
+
+  if updated_workspace.id is null then raise exception 'Workspace not found'; end if;
+  return to_jsonb(updated_workspace);
 end;
 $$;
 
@@ -467,7 +486,13 @@ $$;
 -- All board writes pass through one transactional command endpoint.
 create or replace function public.workspace_board_command(p_workspace_id uuid, p_action text, p_payload jsonb default '{}'::jsonb)
 returns jsonb language plpgsql security definer set search_path = public as $$
-declare item jsonb; target_task public.tasks; target_column public.columns; target_label public.labels; assigned boolean; result_row jsonb;
+declare
+  item jsonb;
+  target_task public.tasks;
+  target_column public.columns;
+  target_label public.labels;
+  requested_label_ids uuid[];
+  result_row jsonb;
 begin
   perform public.assert_workspace_member_or_super_admin(p_workspace_id);
 
@@ -501,10 +526,34 @@ begin
       returning * into target_task;
       result_row := to_jsonb(target_task);
     when 'update_task' then
+      select coalesce(array_agg(value::uuid), array[]::uuid[])
+      into requested_label_ids
+      from jsonb_array_elements_text(coalesce(p_payload->'label_ids', '[]'::jsonb)) selected(value);
+
+      if exists (
+        select 1
+        from unnest(requested_label_ids) requested(label_id)
+        left join public.labels l on l.id = requested.label_id and l.workspace_id = p_workspace_id
+        where l.id is null
+      ) then
+        raise exception 'One or more selected labels do not belong to this workspace';
+      end if;
+
       update public.tasks set column_id = (p_payload->>'column_id')::uuid, title = trim(p_payload->>'title'),
         description = nullif(trim(p_payload->>'description'), ''), priority = nullif(p_payload->>'priority', ''),
         due_date = nullif(p_payload->>'due_date', '')::date, updated_at = now()
       where id = (p_payload->>'id')::uuid and workspace_id = p_workspace_id returning * into target_task;
+
+      if target_task.id is null then raise exception 'Task not found'; end if;
+
+      delete from public.task_labels
+      where task_id = target_task.id and not (label_id = any(requested_label_ids));
+
+      insert into public.task_labels(task_id, label_id)
+      select target_task.id, selected.label_id
+      from unnest(requested_label_ids) selected(label_id)
+      on conflict (task_id, label_id) do nothing;
+
       result_row := to_jsonb(target_task);
     when 'move_task' then
       update public.tasks set column_id = (p_payload->>'column_id')::uuid,
@@ -538,17 +587,6 @@ begin
       result_row := to_jsonb(target_label);
     when 'delete_label' then
       delete from public.labels where id = (p_payload->>'id')::uuid and workspace_id = p_workspace_id;
-    when 'toggle_task_label' then
-      if not exists (select 1 from public.tasks where id = (p_payload->>'task_id')::uuid and workspace_id = p_workspace_id)
-        or not exists (select 1 from public.labels where id = (p_payload->>'label_id')::uuid and workspace_id = p_workspace_id) then
-        raise exception 'Task or label not found in this workspace';
-      end if;
-      select exists(select 1 from public.task_labels where task_id = (p_payload->>'task_id')::uuid and label_id = (p_payload->>'label_id')::uuid) into assigned;
-      if assigned then
-        delete from public.task_labels where task_id = (p_payload->>'task_id')::uuid and label_id = (p_payload->>'label_id')::uuid;
-      else
-        insert into public.task_labels(task_id, label_id) values ((p_payload->>'task_id')::uuid, (p_payload->>'label_id')::uuid);
-      end if;
     else raise exception 'Unknown board action: %', p_action;
   end case;
   return coalesce(result_row, jsonb_build_object('ok', true));
@@ -601,7 +639,7 @@ revoke execute on all functions in schema public from public, anon;
 grant execute on function public.ensure_current_user(), public.get_user_dashboard(),
   public.select_google_login_identity(text),
   public.get_workspace_context(uuid), public.get_workspace_board(uuid), public.create_workspace(text),
-  public.join_workspace(text), public.add_workspace_member(uuid, text, text),
+  public.rename_workspace(uuid, text), public.join_workspace(text), public.add_workspace_member(uuid, text, text),
   public.change_workspace_member_role(uuid, uuid, text), public.remove_workspace_member(uuid, uuid),
   public.delete_workspace(uuid), public.update_user_profile(text), public.workspace_board_command(uuid, text, jsonb)
   to authenticated;

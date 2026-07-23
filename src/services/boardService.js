@@ -77,6 +77,3 @@ export const emptyTrash = (workspaceId) => boardCommand(workspaceId, 'empty_tras
 export const createLabel = (workspaceId, label) => boardCommand(workspaceId, 'create_label', label);
 
 export const deleteLabel = (workspaceId, labelId) => boardCommand(workspaceId, 'delete_label', { id: labelId });
-
-export const toggleTaskLabel = (workspaceId, taskId, labelId) =>
-  boardCommand(workspaceId, 'toggle_task_label', { task_id: taskId, label_id: labelId });

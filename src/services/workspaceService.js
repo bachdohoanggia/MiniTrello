@@ -19,6 +19,10 @@ export const fetchWorkspaceContext = (workspaceId) => rpc('get_workspace_context
 export const createWorkspace = (name) => rpc('create_workspace', {
   p_name: name,
 });
+export const renameWorkspace = (workspaceId, name) => rpc('rename_workspace', {
+  p_workspace_id: workspaceId,
+  p_name: name,
+});
 export const joinWorkspace = (code) => rpc('join_workspace', {
   p_join_code: code,
 });

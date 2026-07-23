@@ -1,6 +1,6 @@
 # MiniTrello - Feature and Bug Fix Log
 
-## v12 stabilization - production auth, Realtime and session UX
+## v10 stabilization - production auth, Realtime and session UX
 
 - Added a neutral, responsive login experience for both new and returning users,
   including a board preview and automatic-account-creation explanation.
@@ -27,7 +27,7 @@
 - Consolidated documentation to one canonical file per topic and removed stale
   ` 2.md` duplicates.
 
-## v12 - Supabase Google Auth migration
+## v10 - Supabase Google Auth migration
 
 - Replaced Firebase Authentication and Third-Party JWTs with Supabase Google Auth.
 - `public.users.id` now equals `auth.users.id`; RPCs and RLS derive identity from
@@ -50,7 +50,7 @@
 - The temporary Broadcast fallback was removed in v8 after authentication moved to
   native Supabase sessions.
 
-## v12 Login Gmail transfer (replaced in v8)
+## v10 Login Gmail transfer (replaced in v8)
 
 - Added hashed, expiring one-time transfer codes to the unified reset schema.
 - Account Settings can re-authenticate the current Google user, sign out, and let
@@ -62,7 +62,7 @@
 - Retains `users.id`, display name, workspaces, memberships and roles while replacing
   only Firebase UID, email and avatar.
 
-## v12 authentication and global Super Admin
+## v10 authentication and global Super Admin
 
 - Replaced URL-selected fake users with Firebase Google Authentication.
 - Added automatic Supabase profile creation from verified Firebase JWT claims.
@@ -76,7 +76,9 @@
 
 ---
 
-## v11 - Multi-user Draft Safety, Request Locking, Task Ordering, and UI Consistency
+
+
+## v9 - Multi-user Draft Safety, Request Locking, Task Ordering, and UI Consistency
 
 ### Problems fixed
 
@@ -106,7 +108,8 @@
 ---
 
 
-## v10 - Replaced Browser Alerts with Custom Confirmation Modals
+
+## v8 - Replaced Browser Alerts with Custom Confirmation Modals
 
 ### Features added
 
@@ -314,7 +317,8 @@ The document title and project references should use **MiniTrello**.
 ---
 
 
-## v9 - Multi-Label Filtering and Mobile Drag Support
+
+## v7 - Multi-Label Filtering and Mobile Drag Support
 
 ### Features added
 
@@ -409,7 +413,8 @@ Users could drag tasks and columns on both desktop and mobile.
 ---
 
 
-## v8 - Board-Level Label Filter Bar
+
+## v6 - Board-Level Label Filter Bar
 
 ### Features added
 
@@ -472,235 +477,82 @@ Users could quickly filter by labels such as `Work`, `School`, or `Urgent` witho
 ---
 
 
-## v1 - Initial React + Supabase Kanban MVP
+
+## v5 - Label Management and Custom Label Colors
 
 ### Features added
 
-- Created the first React + Vite frontend.
-- Connected the app to Supabase using `@supabase/supabase-js`.
-- Created the first Supabase schema with two core tables:
-  - `columns`
-  - `tasks`
-- Seeded default columns:
-  - `To Do`
-  - `In Progress`
-  - `Done`
-- Added basic task CRUD:
-  - Add task
-  - View task
-  - Edit task
-  - Delete task
-- Added basic column CRUD:
-  - Add column
-  - Edit column name
-  - Delete column
-- Added a horizontal board layout so extra columns could scroll sideways.
-- Added Supabase Realtime listener so different browser windows could update when the database changed.
+- Added delete control for labels.
+- Added color picker for custom label colors.
+- Kept quick color presets for faster label creation.
+- Updated label colors to store hex values.
 
-### Core files involved
+### Bug / issue: Labels could be created but not deleted
 
-```text
-src/App.jsx
-src/components/Board.jsx
-src/components/Column.jsx
-src/components/TaskCard.jsx
-src/components/TaskForm.jsx
-src/services/boardService.js
-src/supabaseClient.js
-supabase/schema.sql
-```
-
-### Concrete implementation
-
-The app used a Supabase client file so the rest of the React code did not need to manually initialize Supabase every time.
-
-```js
-// src/supabaseClient.js
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-```
-
-The first schema used `column_id` instead of a hard-coded `status` field. This was important because it allowed the app to support unlimited custom columns later.
-
-```sql
-create table public.columns (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  position integer not null default 0,
-  created_at timestamptz default now()
-);
-
-create table public.tasks (
-  id uuid primary key default gen_random_uuid(),
-  column_id uuid not null references public.columns(id) on delete cascade,
-  title text not null,
-  description text,
-  priority text not null default 'medium',
-  due_date date,
-  position integer not null default 0,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
-```
-
-The app loaded columns and tasks separately, then rendered tasks into the correct column by matching `task.column_id` to `column.id`.
-
-```js
-export async function fetchColumns() {
-  return supabase
-    .from('columns')
-    .select('*')
-    .order('position', { ascending: true });
-}
-
-export async function fetchTasks() {
-  return supabase
-    .from('tasks')
-    .select('*')
-    .is('deleted_at', null)
-    .order('position', { ascending: true });
-}
-```
-
-### Problems found
-
-- The UI worked but looked too much like a demo.
-- Priority was always required, so every task showed a priority even when the user did not need it.
-- Task cards could become visually crowded.
-- Task movement initially needed a clearer UX pattern.
-
-### Result
-
-v1 created the foundation: React component structure, Supabase database connection, dynamic columns, task CRUD, and realtime updates.
-
----
-
-## v2 - Cleaner UI, Optional Priority, and Better Task Movement
-
-### Features / fixes added
-
-- Improved card and column styling.
-- Made task priority optional instead of required.
-- Changed the default priority from `medium` to no priority.
-- Hid priority badges when a task had no priority.
-- Improved task movement behavior.
-
-### Bug / issue: Priority was forced on every task
-
-In v1, the database forced this behavior:
-
-```sql
-priority text not null default 'medium'
-```
-
-That meant every new task automatically had `medium` priority. The board became noisy because even normal tasks showed priority labels.
+Users could create labels but had no way to clean up unused labels.
 
 ### Concrete fix
 
-The schema was updated to allow `priority` to be `null`.
+A delete label function was added:
+
+```js
+export async function deleteLabel(labelId) {
+  return supabase
+    .from('labels')
+    .delete()
+    .eq('id', labelId);
+}
+```
+
+Because `task_labels.label_id` used `on delete cascade`, deleting a label automatically removed its relationships from tasks:
 
 ```sql
-alter table public.tasks alter column priority drop not null;
-alter table public.tasks alter column priority drop default;
+label_id uuid not null references public.labels(id) on delete cascade
 ```
 
-The task form was also changed so the first option represented no priority.
+### Bug / issue: Label colors were too limited
 
-```jsx
-<select
-  value={form.priority || ''}
-  onChange={(event) => setForm({ ...form, priority: event.target.value || null })}
->
-  <option value="">No priority</option>
-  <option value="low">Low</option>
-  <option value="medium">Medium</option>
-  <option value="high">High</option>
-</select>
-```
-
-Task card rendering became conditional:
-
-```jsx
-{task.priority && (
-  <span className={`priority-pill priority-${task.priority}`}>
-    {task.priority}
-  </span>
-)}
-```
-
-### Result
-
-Task cards became cleaner because ordinary tasks no longer displayed unnecessary priority information.
-
----
-
-
-## v4 - Trello-Style Task Detail Modal
-
-### Features added
-
-- Added a Trello-style task detail modal.
-- Task cards no longer displayed full descriptions on the board.
-- Clicking a task opened the detail modal.
-- Dragging a task still moved it between columns.
-- The detail modal allowed editing:
-  - Title
-  - Description
-  - Column
-  - Priority
-  - Due date
-
-### Bug / issue: Long descriptions broke the board layout
-
-When a task had a very long description, the entire text appeared inside the card. This made the column extremely tall and difficult to scan.
+Labels originally used only preset color names. That limited customization.
 
 ### Concrete fix
 
-The card preview was reduced to only the most important information:
+The label schema stored real hex colors:
 
-```jsx
-// src/components/TaskCard.jsx
-<h3>{task.title}</h3>
-
-{task.priority && <PriorityPill priority={task.priority} />}
-
-{task.due_date && (
-  <span className="task-meta-pill">Due {formatShortDate(task.due_date)}</span>
-)}
-
-{task.description && (
-  <span className="task-meta-pill">Description</span>
-)}
+```sql
+color text not null default '#6366f1'
 ```
 
-The full description moved into `TaskDetailModal.jsx`:
+The form used a color input:
 
 ```jsx
-<textarea
-  value={form.description}
-  onChange={(event) => setForm({ ...form, description: event.target.value })}
-  placeholder="Add a more detailed description..."
+<input
+  type="color"
+  value={newLabelColor}
+  onChange={(event) => setNewLabelColor(event.target.value)}
 />
 ```
 
-The interaction model became:
+The label style helper converted the stored hex color into a readable pill style:
 
-```text
-Click task card        -> open task detail modal
-Click and drag card    -> move task to another column
+```js
+export function getLabelStyle(color) {
+  return {
+    backgroundColor: `${color}22`,
+    borderColor: `${color}55`,
+    color
+  };
+}
 ```
 
 ### Result
 
-The board became a clean overview, while the modal handled full task details. This matched the Trello-style interaction more closely.
+Labels became manageable and customizable instead of being fixed to a small preset list.
 
 ---
 
-## v5 - Movable Columns, Search, Labels, and Trash System
+
+
+## v4 - Movable Columns, Search, Labels, and Trash System
 
 ### Features added
 
@@ -893,81 +745,249 @@ select cron.schedule(
 
 ### Result
 
-v5 was a major product upgrade. MiniTrello became safer and more useful because tasks could be recovered from Trash instead of being permanently deleted immediately.
+v4 was a major product upgrade. MiniTrello became safer and more useful because tasks could be recovered from Trash instead of being permanently deleted immediately.
 
 ---
 
-## v6 - Label Management and Custom Label Colors
+
+
+## v3 - Trello-Style Task Detail Modal
 
 ### Features added
 
-- Added delete control for labels.
-- Added color picker for custom label colors.
-- Kept quick color presets for faster label creation.
-- Updated label colors to store hex values.
+- Added a Trello-style task detail modal.
+- Task cards no longer displayed full descriptions on the board.
+- Clicking a task opened the detail modal.
+- Dragging a task still moved it between columns.
+- The detail modal allowed editing:
+  - Title
+  - Description
+  - Column
+  - Priority
+  - Due date
 
-### Bug / issue: Labels could be created but not deleted
+### Bug / issue: Long descriptions broke the board layout
 
-Users could create labels but had no way to clean up unused labels.
-
-### Concrete fix
-
-A delete label function was added:
-
-```js
-export async function deleteLabel(labelId) {
-  return supabase
-    .from('labels')
-    .delete()
-    .eq('id', labelId);
-}
-```
-
-Because `task_labels.label_id` used `on delete cascade`, deleting a label automatically removed its relationships from tasks:
-
-```sql
-label_id uuid not null references public.labels(id) on delete cascade
-```
-
-### Bug / issue: Label colors were too limited
-
-Labels originally used only preset color names. That limited customization.
+When a task had a very long description, the entire text appeared inside the card. This made the column extremely tall and difficult to scan.
 
 ### Concrete fix
 
-The label schema stored real hex colors:
-
-```sql
-color text not null default '#6366f1'
-```
-
-The form used a color input:
+The card preview was reduced to only the most important information:
 
 ```jsx
-<input
-  type="color"
-  value={newLabelColor}
-  onChange={(event) => setNewLabelColor(event.target.value)}
+// src/components/TaskCard.jsx
+<h3>{task.title}</h3>
+
+{task.priority && <PriorityPill priority={task.priority} />}
+
+{task.due_date && (
+  <span className="task-meta-pill">Due {formatShortDate(task.due_date)}</span>
+)}
+
+{task.description && (
+  <span className="task-meta-pill">Description</span>
+)}
+```
+
+The full description moved into `TaskDetailModal.jsx`:
+
+```jsx
+<textarea
+  value={form.description}
+  onChange={(event) => setForm({ ...form, description: event.target.value })}
+  placeholder="Add a more detailed description..."
 />
 ```
 
-The label style helper converted the stored hex color into a readable pill style:
+The interaction model became:
 
-```js
-export function getLabelStyle(color) {
-  return {
-    backgroundColor: `${color}22`,
-    borderColor: `${color}55`,
-    color
-  };
-}
+```text
+Click task card        -> open task detail modal
+Click and drag card    -> move task to another column
 ```
 
 ### Result
 
-Labels became manageable and customizable instead of being fixed to a small preset list.
+The board became a clean overview, while the modal handled full task details. This matched the Trello-style interaction more closely.
 
 ---
+
+
+
+## v2 - Cleaner UI, Optional Priority, and Better Task Movement
+
+### Features / fixes added
+
+- Improved card and column styling.
+- Made task priority optional instead of required.
+- Changed the default priority from `medium` to no priority.
+- Hid priority badges when a task had no priority.
+- Improved task movement behavior.
+
+### Bug / issue: Priority was forced on every task
+
+In v1, the database forced this behavior:
+
+```sql
+priority text not null default 'medium'
+```
+
+That meant every new task automatically had `medium` priority. The board became noisy because even normal tasks showed priority labels.
+
+### Concrete fix
+
+The schema was updated to allow `priority` to be `null`.
+
+```sql
+alter table public.tasks alter column priority drop not null;
+alter table public.tasks alter column priority drop default;
+```
+
+The task form was also changed so the first option represented no priority.
+
+```jsx
+<select
+  value={form.priority || ''}
+  onChange={(event) => setForm({ ...form, priority: event.target.value || null })}
+>
+  <option value="">No priority</option>
+  <option value="low">Low</option>
+  <option value="medium">Medium</option>
+  <option value="high">High</option>
+</select>
+```
+
+Task card rendering became conditional:
+
+```jsx
+{task.priority && (
+  <span className={`priority-pill priority-${task.priority}`}>
+    {task.priority}
+  </span>
+)}
+```
+
+### Result
+
+Task cards became cleaner because ordinary tasks no longer displayed unnecessary priority information.
+
+---
+
+
+
+## v1 - Initial React + Supabase Kanban MVP
+
+### Features added
+
+- Created the first React + Vite frontend.
+- Connected the app to Supabase using `@supabase/supabase-js`.
+- Created the first Supabase schema with two core tables:
+  - `columns`
+  - `tasks`
+- Seeded default columns:
+  - `To Do`
+  - `In Progress`
+  - `Done`
+- Added basic task CRUD:
+  - Add task
+  - View task
+  - Edit task
+  - Delete task
+- Added basic column CRUD:
+  - Add column
+  - Edit column name
+  - Delete column
+- Added a horizontal board layout so extra columns could scroll sideways.
+- Added Supabase Realtime listener so different browser windows could update when the database changed.
+
+### Core files involved
+
+```text
+src/App.jsx
+src/components/Board.jsx
+src/components/Column.jsx
+src/components/TaskCard.jsx
+src/components/TaskForm.jsx
+src/services/boardService.js
+src/supabaseClient.js
+supabase/schema.sql
+```
+
+### Concrete implementation
+
+The app used a Supabase client file so the rest of the React code did not need to manually initialize Supabase every time.
+
+```js
+// src/supabaseClient.js
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+```
+
+The first schema used `column_id` instead of a hard-coded `status` field. This was important because it allowed the app to support unlimited custom columns later.
+
+```sql
+create table public.columns (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  position integer not null default 0,
+  created_at timestamptz default now()
+);
+
+create table public.tasks (
+  id uuid primary key default gen_random_uuid(),
+  column_id uuid not null references public.columns(id) on delete cascade,
+  title text not null,
+  description text,
+  priority text not null default 'medium',
+  due_date date,
+  position integer not null default 0,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+```
+
+The app loaded columns and tasks separately, then rendered tasks into the correct column by matching `task.column_id` to `column.id`.
+
+```js
+export async function fetchColumns() {
+  return supabase
+    .from('columns')
+    .select('*')
+    .order('position', { ascending: true });
+}
+
+export async function fetchTasks() {
+  return supabase
+    .from('tasks')
+    .select('*')
+    .is('deleted_at', null)
+    .order('position', { ascending: true });
+}
+```
+
+### Problems found
+
+- The UI worked but looked too much like a demo.
+- Priority was always required, so every task showed a priority even when the user did not need it.
+- Task cards could become visually crowded.
+- Task movement initially needed a clearer UX pattern.
+
+### Result
+
+v1 created the foundation: React component structure, Supabase database connection, dynamic columns, task CRUD, and realtime updates.
+
+---
+
+
+
+
+
+
+
 
 
 

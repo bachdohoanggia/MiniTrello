@@ -18,7 +18,6 @@ import {
   fetchBoard,
   moveTask,
   restoreTask,
-  toggleTaskLabel,
   trashTask,
   updateColumn,
   updateColumnPositions,
@@ -455,13 +454,6 @@ export default function App({ workspaceId, workspaceContext, onNavigate, onOpenS
     });
   }
 
-  async function handleToggleTaskLabel(taskId, labelId, isAssigned) {
-    return runMutation(async () => {
-      await toggleTaskLabel(workspaceId, taskId, labelId, isAssigned);
-      await loadBoard();
-    });
-  }
-
   return (
     <main className="app-shell">
       <header className="workspace-header">
@@ -616,7 +608,6 @@ export default function App({ workspaceId, workspaceContext, onNavigate, onOpenS
         onDelete={handleTrashTask}
         onCreateLabel={handleCreateLabel}
         onDeleteLabel={handleDeleteLabel}
-        onToggleTaskLabel={handleToggleTaskLabel}
         isBusy={isMutating}
       />
 

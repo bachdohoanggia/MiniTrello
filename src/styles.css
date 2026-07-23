@@ -2066,9 +2066,18 @@ button:disabled:hover {
 .dashboard-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(300px, 0.55fr);
+  align-items: start;
   gap: 20px;
   max-width: 1180px;
   margin: auto;
+}
+
+.workspace-list-card {
+  display: flex;
+  max-height: calc(100dvh - 196px);
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .dashboard-actions,
@@ -2076,6 +2085,14 @@ button:disabled:hover {
 .workspace-card-grid {
   display: grid;
   gap: 14px;
+}
+
+.workspace-card-grid {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
 }
 
 .portal-form h2,
@@ -2194,6 +2211,8 @@ button:disabled:hover {
 .settings-section h3 { margin: 0 0 5px; }
 .settings-section p { margin: 0; color: #aab2c5; }
 .settings-section-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.workspace-name-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; margin-top: 14px; }
+.workspace-name-form input { border-color: #4b5563; background: #282d36; color: #f8fafc; }
 .join-code-card { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .join-code-card code { flex: 1; border: 1px dashed #6366f1; border-radius: 14px; background: #282d36; color: #c7d2fe; padding: 14px; font-size: 20px; font-weight: 950; letter-spacing: .16em; }
 .add-member-form { display: grid; grid-template-columns: minmax(0, 1fr) 130px auto; gap: 10px; margin-top: 18px; }
@@ -2354,6 +2373,7 @@ button:disabled:hover {
 @media (max-width: 760px) {
   .user-picker-grid,
   .dashboard-layout { grid-template-columns: 1fr; }
+  .workspace-list-card { max-height: 70dvh; }
   .portal-toolbar { align-items: stretch; flex-direction: column; }
   .add-member-form,
   .member-row { grid-template-columns: 1fr; }

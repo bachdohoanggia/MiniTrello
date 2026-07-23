@@ -47,10 +47,10 @@ export default function TaskDetailModal({
   onDelete,
   onCreateLabel,
   onDeleteLabel,
-  onToggleTaskLabel,
   isBusy,
 }) {
   const [formData, setFormData] = useState(emptyTask);
+  const [draftLabelIds, setDraftLabelIds] = useState([]);
   const [newLabelName, setNewLabelName] = useState('');
   const [newLabelColor, setNewLabelColor] = useState('#2563eb');
 
@@ -64,23 +64,26 @@ export default function TaskDetailModal({
       due_date: task.due_date || '',
       column_id: task.column_id || columns[0]?.id || '',
     });
+    setDraftLabelIds(
+      taskLabels
+        .filter((item) => item.task_id === task.id)
+        .map((item) => item.label_id)
+    );
     setNewLabelName('');
     setNewLabelColor('#2563eb');
   }, [task?.id]);
+
+  useEffect(() => {
+    const availableLabelIds = new Set(labels.map((label) => label.id));
+    setDraftLabelIds((current) => current.filter((labelId) => availableLabelIds.has(labelId)));
+  }, [labels]);
 
   const currentColumn = useMemo(
     () => columns.find((column) => column.id === formData.column_id),
     [columns, formData.column_id]
   );
 
-  const assignedLabelIds = useMemo(() => {
-    if (!task) return new Set();
-    return new Set(
-      taskLabels
-        .filter((item) => item.task_id === task.id)
-        .map((item) => item.label_id)
-    );
-  }, [task, taskLabels]);
+  const assignedLabelIds = useMemo(() => new Set(draftLabelIds), [draftLabelIds]);
 
   if (!task) return null;
 
@@ -101,7 +104,16 @@ export default function TaskDetailModal({
       priority: formData.priority || null,
       due_date: formData.due_date || null,
       column_id: formData.column_id,
+      label_ids: draftLabelIds,
     });
+  }
+
+  function handleToggleDraftLabel(labelId) {
+    setDraftLabelIds((current) => (
+      current.includes(labelId)
+        ? current.filter((id) => id !== labelId)
+        : [...current, labelId]
+    ));
   }
 
   async function handleCreateLabel(event) {
@@ -191,9 +203,9 @@ export default function TaskDetailModal({
                         type="button"
                         className={`label-toggle ${isAssigned ? 'is-selected' : ''}`}
                         style={getLabelStyle(label.color)}
-                        onClick={() => onToggleTaskLabel(task.id, label.id, isAssigned)}
+                        onClick={() => handleToggleDraftLabel(label.id)}
                         disabled={isBusy}
-                        title={isAssigned ? 'Remove this label from the task' : 'Add this label to the task'}
+                        title={isAssigned ? 'Remove this label when changes are saved' : 'Add this label when changes are saved'}
                       >
                         {isAssigned ? '✓ ' : ''}{label.name}
                       </button>

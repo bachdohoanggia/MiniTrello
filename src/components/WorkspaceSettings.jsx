@@ -4,6 +4,7 @@ import {
   changeWorkspaceMemberRole,
   deleteWorkspace,
   fetchWorkspaceContext,
+  renameWorkspace,
   removeWorkspaceMember,
 } from '../services/workspaceService.js';
 
@@ -16,15 +17,29 @@ export default function WorkspaceSettings({ isOpen, workspaceId, context, onClos
   const [pendingKick, setPendingKick] = useState(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteName, setDeleteName] = useState('');
+  const [workspaceName, setWorkspaceName] = useState('');
+  const [message, setMessage] = useState('');
   const isAdmin = ['admin', 'super_admin'].includes(context?.current_role);
   const adminCount = context?.members?.filter((member) => member.workspace_role_key === 'admin').length || 0;
 
   useEffect(() => {
     if (!isOpen) return;
+    setWorkspaceName(context?.workspace?.name || '');
+    setMessage('');
     fetchWorkspaceContext(workspaceId)
       .then(onContextChange)
       .catch((err) => setError(err.message || 'Unable to refresh workspace settings.'));
   }, [isOpen, workspaceId]);
+
+  useEffect(() => {
+    if (isOpen && context?.workspace?.name) setWorkspaceName(context.workspace.name);
+  }, [isOpen, context?.workspace?.name]);
+
+  useEffect(() => {
+    if (!message) return undefined;
+    const timer = window.setTimeout(() => setMessage(''), 2500);
+    return () => window.clearTimeout(timer);
+  }, [message]);
 
   if (!isOpen) return null;
 
@@ -45,6 +60,15 @@ export default function WorkspaceSettings({ isOpen, workspaceId, context, onClos
     if (!targetEmail.trim()) return;
     const success = await run(() => addWorkspaceMember(workspaceId, targetEmail.trim(), targetRole));
     if (success) setTargetEmail('');
+  }
+
+  async function handleRename(event) {
+    event.preventDefault();
+    const nextName = workspaceName.trim();
+    if (!nextName || nextName === context.workspace.name) return;
+    setMessage('');
+    const success = await run(() => renameWorkspace(workspaceId, nextName));
+    if (success) setMessage('Workspace name updated.');
   }
 
   async function handleRoleChange(member, role) {
@@ -84,6 +108,28 @@ export default function WorkspaceSettings({ isOpen, workspaceId, context, onClos
         </header>
 
         {error && <div className="portal-error">{error}</div>}
+
+        {isAdmin && (
+          <section className="settings-section">
+            <h3>Workspace name</h3>
+            <p>Change the name shown on the dashboard and workspace board.</p>
+            <form className="workspace-name-form" onSubmit={handleRename}>
+              <input
+                value={workspaceName}
+                onChange={(event) => { setWorkspaceName(event.target.value); setMessage(''); }}
+                maxLength={100}
+                placeholder="Workspace name"
+                disabled={busy}
+              />
+              <button
+                type="submit"
+                disabled={busy || !workspaceName.trim() || workspaceName.trim() === context.workspace.name}
+              >
+                {busy ? 'Saving…' : 'Save name'}
+              </button>
+            </form>
+          </section>
+        )}
 
         <section className="settings-section">
           <h3>Join code</h3>
@@ -154,6 +200,7 @@ export default function WorkspaceSettings({ isOpen, workspaceId, context, onClos
           </section>
         )}
       </section>
+      {message && <div className="toast success">{message}</div>}
     </div>
   );
 }
