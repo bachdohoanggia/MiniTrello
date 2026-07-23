@@ -741,8 +741,8 @@ h1 {
 }
 
 .rich-text-toolbar .toolbar-history button {
-  gap: 6px;
-  padding-inline: 9px;
+  width: 34px;
+  padding: 7px;
 }
 
 .toolbar-history svg {

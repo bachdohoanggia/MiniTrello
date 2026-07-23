@@ -142,14 +142,12 @@ export default function RichTextEditor({
               <path d="M9 7 4 12l5 5" />
               <path d="M4 12h10a6 6 0 0 1 6 6" />
             </svg>
-            <span>Undo</span>
           </button>
           <button type="button" aria-label="Redo" title="Redo" disabled={disabled} onMouseDown={(event) => event.preventDefault()} onClick={() => runCommand('redo')}>
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="m15 7 5 5-5 5" />
               <path d="M20 12H10a6 6 0 0 0-6 6" />
             </svg>
-            <span>Redo</span>
           </button>
         </div>
       </div>
