@@ -26,6 +26,7 @@ export default function WorkspaceSettings({ isOpen, workspaceId, context, onClos
     if (!isOpen) return;
     setWorkspaceName(context?.workspace?.name || '');
     setMessage('');
+    setError('');
     fetchWorkspaceContext(workspaceId)
       .then(onContextChange)
       .catch((err) => setError(err.message || 'Unable to refresh workspace settings.'));
@@ -41,6 +42,12 @@ export default function WorkspaceSettings({ isOpen, workspaceId, context, onClos
     return () => window.clearTimeout(timer);
   }, [message]);
 
+  useEffect(() => {
+    if (!error) return undefined;
+    const timer = window.setTimeout(() => setError(''), 4500);
+    return () => window.clearTimeout(timer);
+  }, [error]);
+
   if (!isOpen) return null;
 
   async function refresh() {
@@ -49,7 +56,7 @@ export default function WorkspaceSettings({ isOpen, workspaceId, context, onClos
 
   async function run(action) {
     if (busy) return false;
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setMessage('');
     try { await action(); await refresh(); return true; }
     catch (err) { setError(err.message || 'Workspace action failed.'); return false; }
     finally { setBusy(false); }
@@ -106,8 +113,6 @@ export default function WorkspaceSettings({ isOpen, workspaceId, context, onClos
           <div><p className="modal-kicker">Workspace Settings</p><h2>{context.workspace.name}</h2></div>
           <button type="button" className="modal-close-button" onClick={onClose} disabled={busy}>×</button>
         </header>
-
-        {error && <div className="portal-error">{error}</div>}
 
         {isAdmin && (
           <section className="settings-section">
@@ -201,6 +206,7 @@ export default function WorkspaceSettings({ isOpen, workspaceId, context, onClos
         )}
       </section>
       {message && <div className="toast success">{message}</div>}
+      {error && <div className="toast error">{error}</div>}
     </div>
   );
 }
