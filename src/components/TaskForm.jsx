@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import RichTextEditor from './RichTextEditor.jsx';
+import { cleanRichText } from '../utils/richText.js';
 
 const blankForm = {
   title: '',
@@ -37,7 +39,7 @@ export default function TaskForm({ isOpen, columns, defaultColumnId, isBusy, onC
     await onSubmit({
       ...formData,
       title: cleanTitle,
-      description: formData.description.trim(),
+      description: cleanRichText(formData.description),
       priority: formData.priority || null,
       due_date: formData.due_date || null,
     });
@@ -66,16 +68,15 @@ export default function TaskForm({ isOpen, columns, defaultColumnId, isBusy, onC
             />
           </label>
 
-          <label>
-            Description <span className="optional-text">optional</span>
-            <textarea
-              name="description"
+          <div className="task-form-field">
+            <span className="task-form-field-label">Description <span className="optional-text">optional</span></span>
+            <RichTextEditor
               value={formData.description}
-              onChange={handleChange}
+              onChange={(description) => setFormData((current) => ({ ...current, description }))}
               placeholder="You can also add details later by clicking the card."
-              rows="4"
+              disabled={isBusy}
             />
-          </label>
+          </div>
 
           <div className="form-row">
             <label>

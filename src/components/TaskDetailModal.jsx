@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getLabelColorValue, getLabelStyle } from '../utils/labelStyles.js';
+import { cleanRichText } from '../utils/richText.js';
+import RichTextEditor from './RichTextEditor.jsx';
 
 const emptyTask = {
   title: '',
@@ -100,7 +102,7 @@ export default function TaskDetailModal({
 
     onSave(task.id, {
       title: cleanTitle,
-      description: formData.description.trim(),
+      description: cleanRichText(formData.description),
       priority: formData.priority || null,
       due_date: formData.due_date || null,
       column_id: formData.column_id,
@@ -266,12 +268,11 @@ export default function TaskDetailModal({
               <span className="detail-icon">☰</span>
               <h3>Description</h3>
             </div>
-            <textarea
-              name="description"
+            <RichTextEditor
               value={formData.description}
-              onChange={handleChange}
+              onChange={(description) => setFormData((current) => ({ ...current, description }))}
               placeholder="Add a more detailed description..."
-              rows="7"
+              disabled={isBusy}
             />
           </section>
         </div>
