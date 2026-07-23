@@ -734,6 +734,27 @@ h1 {
   flex: 1 0 10px;
 }
 
+.toolbar-history {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.rich-text-toolbar .toolbar-history button {
+  gap: 6px;
+  padding-inline: 9px;
+}
+
+.toolbar-history svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .rich-text-link-form {
   display: grid;
   grid-template-columns: minmax(150px, 1fr) auto auto;

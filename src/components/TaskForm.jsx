@@ -13,13 +13,16 @@ const blankForm = {
 export default function TaskForm({ isOpen, columns, defaultColumnId, isBusy, onClose, onSubmit }) {
   const [formData, setFormData] = useState(blankForm);
 
-  useEffect(() => {
-    if (!isOpen) return;
-
+  function resetForm() {
     setFormData({
       ...blankForm,
       column_id: defaultColumnId || columns[0]?.id || '',
     });
+  }
+
+  useEffect(() => {
+    if (!isOpen) return;
+    resetForm();
   }, [isOpen, defaultColumnId]);
 
   if (!isOpen) return null;
@@ -43,10 +46,16 @@ export default function TaskForm({ isOpen, columns, defaultColumnId, isBusy, onC
       priority: formData.priority || null,
       due_date: formData.due_date || null,
     });
+    resetForm();
+  }
+
+  function handleClose() {
+    resetForm();
+    onClose();
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={isBusy ? undefined : onClose}>
+    <div className="modal-backdrop" role="presentation" onClick={isBusy ? undefined : handleClose}>
       <section className="modal-card task-create-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div>
@@ -107,7 +116,7 @@ export default function TaskForm({ isOpen, columns, defaultColumnId, isBusy, onC
           </label>
 
           <div className="form-actions">
-            <button type="button" className="secondary" onClick={onClose} disabled={isBusy}>
+            <button type="button" className="secondary" onClick={handleClose} disabled={isBusy}>
               Cancel
             </button>
             <button type="submit" disabled={isBusy}>{isBusy ? 'Creating…' : 'Create Task'}</button>

@@ -16,8 +16,17 @@ export default function RichTextEditor({
 
   useEffect(() => {
     const editor = editorRef.current;
-    if (!editor || value === lastEmittedValue.current) return;
-    editor.innerHTML = normalizeRichText(value);
+    if (!editor) return;
+
+    if (value === lastEmittedValue.current && editor.innerHTML === lastEmittedValue.current) {
+      return;
+    }
+
+    const normalizedValue = normalizeRichText(value);
+    if (editor.innerHTML !== normalizedValue) {
+      editor.innerHTML = normalizedValue;
+    }
+    lastEmittedValue.current = normalizedValue;
   }, [value]);
 
   function emitChange() {
@@ -127,8 +136,22 @@ export default function RichTextEditor({
         <span className="toolbar-divider" />
         <button type="button" aria-label="Add link" title="Add link" disabled={disabled} onMouseDown={(event) => { event.preventDefault(); rememberSelection(); }} onClick={openLinkEditor}>↗ Link</button>
         <span className="toolbar-spacer" />
-        <button type="button" aria-label="Undo" title="Undo" disabled={disabled} onMouseDown={(event) => event.preventDefault()} onClick={() => runCommand('undo')}>↶</button>
-        <button type="button" aria-label="Redo" title="Redo" disabled={disabled} onMouseDown={(event) => event.preventDefault()} onClick={() => runCommand('redo')}>↷</button>
+        <div className="toolbar-history" role="group" aria-label="Edit history">
+          <button type="button" aria-label="Undo" title="Undo" disabled={disabled} onMouseDown={(event) => event.preventDefault()} onClick={() => runCommand('undo')}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 7 4 12l5 5" />
+              <path d="M4 12h10a6 6 0 0 1 6 6" />
+            </svg>
+            <span>Undo</span>
+          </button>
+          <button type="button" aria-label="Redo" title="Redo" disabled={disabled} onMouseDown={(event) => event.preventDefault()} onClick={() => runCommand('redo')}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m15 7 5 5-5 5" />
+              <path d="M20 12H10a6 6 0 0 0-6 6" />
+            </svg>
+            <span>Redo</span>
+          </button>
+        </div>
       </div>
 
       {linkOpen && (
