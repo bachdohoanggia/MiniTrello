@@ -1,58 +1,28 @@
-# System Design
-
-## Overview
-
-TaskFlow Board is a React + Supabase Kanban app. It is deployed as a static React site and uses Supabase as the cloud database/API layer.
+# MiniTrello v8 system design
 
 ```text
-Browser
-  ↓
-React + Vite app
-  ↓
-Supabase JavaScript client
-  ↓
-Supabase Postgres database
+Google OAuth → Supabase Auth session
+                         ├── authenticated RPCs
+                         ├── auth.uid()-protected reads
+                         └── authorized Postgres Changes
 ```
 
-## Main components
+`AuthContext.jsx` restores the Supabase session and idempotently creates the
+application profile. Routes never contain a user ID: `/` is the dashboard,
+`/account` is the current account, and `/workspace/:workspaceId` opens a board.
 
-- `App.jsx`: app state, Supabase loading, realtime listeners, handlers
-- `Board.jsx`: horizontal board layout
-- `Column.jsx`: column UI, column drag/drop, task drop area
-- `TaskCard.jsx`: small card preview and task drag source
-- `TaskDetailModal.jsx`: full task detail view, description, labels, save/delete
-- `TrashDrawer.jsx`: Trash UI, restore, empty Trash
-- `boardService.js`: all Supabase queries
+`public.users.id` is exactly `auth.users.id`. All RPCs derive the caller from
+`auth.uid()`; the browser never supplies an actor ID. Regular access requires a
+`workspace_members` row. `global_role=super_admin` bypasses workspace membership
+checks while the database still guarantees that every workspace has a real admin.
 
-## Core flows
+Changing login Gmail uses Supabase manual identity linking. The user links another
+Google identity to the existing `auth.users.id`, selects it in Account Settings,
+then the old Google identity is unlinked. `select_google_login_identity` verifies
+the selected identity belongs to `auth.uid()` before updating the public email and
+avatar. UUID, workspaces, memberships, display name and global role never move.
 
-### Move a task
-
-1. User drags a task card.
-2. Browser stores drag data with the task ID.
-3. User drops it on a column.
-4. React calls `moveTask(taskId, columnId)`.
-5. Supabase updates `tasks.column_id`.
-6. Realtime reloads the board on all open devices.
-
-### Move a column
-
-1. User drags the column handle.
-2. User drops on another column.
-3. React reorders the columns array.
-4. Supabase updates `columns.position`.
-5. Realtime reloads the board.
-
-### Delete a task
-
-1. User clicks Move to Trash in the task detail modal.
-2. React updates the task with `deleted_at`.
-3. Active board hides tasks with `deleted_at`.
-4. Trash drawer shows tasks with `deleted_at`.
-
-### Delete a column
-
-1. User deletes a column.
-2. All active tasks in that column are moved to Trash.
-3. The column is removed.
-4. Trash can restore those tasks into any remaining column.
+Board synchronization is event-driven with no interval polling. Authenticated
+Postgres Changes trigger a debounced board fetch. `INSERT` and `UPDATE` listeners
+are workspace-filtered; `DELETE` listeners are unfiltered because Supabase does not
+support filters on delete events.

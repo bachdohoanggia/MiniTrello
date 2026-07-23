@@ -70,9 +70,6 @@ export default function TrashDrawer({
           <button type="button" className="danger" onClick={onEmptyTrash} disabled={taskCount === 0 || isBusy}>
             {isBusy ? 'Working…' : 'Empty Trash'}
           </button>
-          <button type="button" className="secondary" onClick={onClose} disabled={isBusy}>
-            Back to Board
-          </button>
         </div>
 
         {!hasColumns && taskCount > 0 && (

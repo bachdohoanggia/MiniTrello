@@ -1,6 +1,6 @@
 # TaskFlow Board
 
-TaskFlow Board is a mini Trello-style Kanban board built with React, Vite, and Supabase. It supports movable columns, draggable tasks, task search, labels, Trash/restore, and shared cloud data across devices.
+TaskFlow Board is a multi-workspace Trello-style Kanban app built with React and Supabase.
 
 ## Features
 
@@ -21,6 +21,9 @@ TaskFlow Board is a mini Trello-style Kanban board built with React, Vite, and S
 - Empty Trash button
 - App-level cleanup for Trash items older than 30 days
 - Supabase Realtime updates across devices
+- Google sign-in through Supabase Auth
+- Workspace admin/member roles and a global Super Admin role
+- Change the Google login Gmail while retaining the same MiniTrello UUID, workspaces and roles
 
 ## Important note about Trash
 
@@ -44,19 +47,13 @@ Paste and run the full SQL file from:
 supabase/schema.sql
 ```
 
-This single file resets the demo tables and creates:
+This destructive v8 schema resets existing MiniTrello data and creates the authenticated workspace model, RPCs, RLS policies, and Realtime publication.
 
 - `columns`
 - `tasks`
 - `labels`
 - `task_labels`
-- starter columns
-- starter labels
-- RLS policies
-- Realtime publication setup
-- a helper function for deleting Trash items older than 30 days
-
-This is a public demo board. Anyone with the deployed link can view and edit the board.
+In Supabase, enable Google under **Authentication → Sign In / Providers → Supabase Auth** and configure the Google OAuth Client ID and Client Secret. Also enable manual identity linking so users can replace their login Gmail without changing their MiniTrello UUID. See `docs/AUTH_SUPER_ADMIN.md` for the complete order.
 
 ## Environment variables
 
@@ -67,7 +64,7 @@ VITE_SUPABASE_URL=your_supabase_project_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_public_key
 ```
 
-Use the Supabase `anon public` key. Do not put the service role key in frontend code.
+Use the Supabase publishable/anon key. Never put a Supabase secret/service-role key in frontend variables.
 
 ## Run locally
 

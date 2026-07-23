@@ -40,7 +40,7 @@ function reorderItems(items, draggedId, targetId) {
   return nextItems;
 }
 
-export default function App() {
+export default function App({ workspaceId, workspaceContext, onNavigate, onOpenSettings }) {
   const [columns, setColumns] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [trashTasks, setTrashTasks] = useState([]);
@@ -159,7 +159,7 @@ export default function App() {
 
     try {
       setError('');
-      const board = await fetchBoard();
+      const board = await fetchBoard(workspaceId);
       setColumns(board.columns);
       setTasks(board.tasks);
       setTrashTasks(board.trashTasks);
@@ -170,7 +170,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [workspaceId]);
 
   async function runMutation(action) {
     if (mutationLockRef.current) return false;
@@ -200,7 +200,7 @@ export default function App() {
       }
 
       try {
-        await deleteExpiredTrashTasks(30);
+        await deleteExpiredTrashTasks(workspaceId, 30);
       } catch (err) {
         console.warn('Could not clean old trash tasks:', err);
       }
@@ -209,7 +209,7 @@ export default function App() {
     }
 
     initializeBoard();
-  }, [loadBoard]);
+  }, [loadBoard, workspaceId]);
 
   useEffect(() => {
     if (!supabase) return undefined;
@@ -221,22 +221,34 @@ export default function App() {
     };
 
     const channel = supabase
-      .channel('taskflow-board-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'columns' }, scheduleBoardRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, scheduleBoardRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'labels' }, scheduleBoardRefresh)
+      .channel(`taskflow-board-${workspaceId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'columns', filter: `workspace_id=eq.${workspaceId}` }, scheduleBoardRefresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'columns', filter: `workspace_id=eq.${workspaceId}` }, scheduleBoardRefresh)
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'columns' }, scheduleBoardRefresh)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tasks', filter: `workspace_id=eq.${workspaceId}` }, scheduleBoardRefresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tasks', filter: `workspace_id=eq.${workspaceId}` }, scheduleBoardRefresh)
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'tasks' }, scheduleBoardRefresh)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'labels', filter: `workspace_id=eq.${workspaceId}` }, scheduleBoardRefresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'labels', filter: `workspace_id=eq.${workspaceId}` }, scheduleBoardRefresh)
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'labels' }, scheduleBoardRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'task_labels' }, scheduleBoardRefresh)
-      .subscribe();
+      .subscribe((status, channelError) => {
+        if (status === 'SUBSCRIBED') scheduleBoardRefresh();
+        console.info('Board Realtime status:', status, channelError || '');
+        if (['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(status)) {
+          console.error('Board Realtime channel failed:', status, channelError);
+        }
+      });
 
     return () => {
       window.clearTimeout(refreshTimer);
       supabase.removeChannel(channel);
     };
-  }, [loadBoard]);
+  }, [loadBoard, workspaceId]);
 
   async function handleCreateColumn(name) {
     return runMutation(async () => {
-      await createColumn(name);
+      await createColumn(workspaceId, name);
       showMessage('Column added.');
       await loadBoard();
     });
@@ -248,7 +260,7 @@ export default function App() {
 
   async function handleSaveColumn(column, newName) {
     return runMutation(async () => {
-      await updateColumn(column.id, { name: newName });
+      await updateColumn(workspaceId, column.id, { name: newName });
       showMessage('Column updated.');
       setEditingColumn(null);
       await loadBoard();
@@ -265,7 +277,7 @@ export default function App() {
     if (!confirmed) return;
 
     return runMutation(async () => {
-      await deleteColumnAndTrashTasks(column);
+      await deleteColumnAndTrashTasks(workspaceId, column);
       showMessage('Column deleted. Its tasks moved to Trash.');
       if (selectedTask && selectedTask.column_id === column.id) {
         setSelectedTaskId(null);
@@ -282,7 +294,7 @@ export default function App() {
 
     return runMutation(async () => {
       setColumns(nextColumns);
-      await updateColumnPositions(nextColumns);
+      await updateColumnPositions(workspaceId, nextColumns);
       showMessage('Column moved.');
       await loadBoard();
     });
@@ -313,7 +325,7 @@ export default function App() {
 
   async function handleSubmitTask(formData) {
     return runMutation(async () => {
-      await createTask(formData);
+      await createTask(workspaceId, formData);
       showMessage('Task added.');
       closeTaskForm();
       await loadBoard();
@@ -322,7 +334,7 @@ export default function App() {
 
   async function handleSaveTask(taskId, formData) {
     return runMutation(async () => {
-      await updateTask(taskId, formData);
+      await updateTask(workspaceId, taskId, formData);
       showMessage('Task updated.');
       setSelectedTaskId(null);
       await loadBoard();
@@ -331,7 +343,7 @@ export default function App() {
 
   async function handleMoveTask(taskId, newColumnId) {
     return runMutation(async () => {
-      await moveTask(taskId, newColumnId);
+      await moveTask(workspaceId, taskId, newColumnId);
       showMessage('Task moved.');
       await loadBoard();
     });
@@ -360,8 +372,8 @@ export default function App() {
     return runMutation(async () => {
       setTasks((current) => current.map((task) => task.id === draggedTaskId ? movedTask : task));
       await Promise.all([
-        updateTaskPositions(destinationTasks),
-        sourceTasks.length > 0 ? updateTaskPositions(sourceTasks) : Promise.resolve(),
+        updateTaskPositions(workspaceId, destinationTasks),
+        sourceTasks.length > 0 ? updateTaskPositions(workspaceId, sourceTasks) : Promise.resolve(),
       ]);
       showMessage('Task order updated.');
       await loadBoard();
@@ -377,10 +389,8 @@ export default function App() {
     });
     if (!confirmed) return;
 
-    const currentColumn = columns.find((column) => column.id === task.column_id);
-
     return runMutation(async () => {
-      await trashTask(task, currentColumn);
+      await trashTask(workspaceId, task);
       showMessage('Task moved to Trash.');
       if (selectedTaskId === task.id) {
         setSelectedTaskId(null);
@@ -396,7 +406,7 @@ export default function App() {
     }
 
     return runMutation(async () => {
-      await restoreTask(taskId, columnId);
+      await restoreTask(workspaceId, taskId, columnId);
       showMessage('Task restored.');
       await loadBoard();
     });
@@ -412,7 +422,7 @@ export default function App() {
     if (!confirmed) return;
 
     return runMutation(async () => {
-      await emptyTrash();
+      await emptyTrash(workspaceId);
       showMessage('Trash emptied.');
       await loadBoard();
     });
@@ -420,7 +430,7 @@ export default function App() {
 
   async function handleCreateLabel(label) {
     return runMutation(async () => {
-      await createLabel(label);
+      await createLabel(workspaceId, label);
       showMessage('Label added.');
       await loadBoard();
     });
@@ -439,7 +449,7 @@ export default function App() {
     if (!confirmed) return;
 
     return runMutation(async () => {
-      await deleteLabel(labelId);
+      await deleteLabel(workspaceId, labelId);
       showMessage('Label deleted.');
       await loadBoard();
     });
@@ -447,7 +457,7 @@ export default function App() {
 
   async function handleToggleTaskLabel(taskId, labelId, isAssigned) {
     return runMutation(async () => {
-      await toggleTaskLabel(taskId, labelId, isAssigned);
+      await toggleTaskLabel(workspaceId, taskId, labelId, isAssigned);
       await loadBoard();
     });
   }
@@ -458,12 +468,23 @@ export default function App() {
         <div className="brand-block" aria-label="TaskFlow Board">
           <div className="brand-mark">MT</div>
           <div>
-            <p className="eyebrow">React + Supabase</p>
-            <h1>MiniTrello</h1>
+            <p className="eyebrow">{workspaceContext?.current_role || 'member'} workspace</p>
+            <h1>{workspaceContext?.workspace?.name || 'MiniTrello'}</h1>
           </div>
         </div>
 
         <div className="workspace-tools">
+          <button type="button" className="workspace-nav-button" onClick={() => onNavigate('/')} title="Back to dashboard">←</button>
+          <select
+            className="workspace-switcher"
+            value={workspaceId}
+            onChange={(event) => onNavigate(`/workspace/${event.target.value}`)}
+            aria-label="Switch workspace"
+          >
+            {(workspaceContext?.user_workspaces || []).map((workspace) => (
+              <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
+            ))}
+          </select>
           <div className="search-box">
             <span aria-hidden="true">⌕</span>
             <input
@@ -491,6 +512,10 @@ export default function App() {
             <span className="trash-icon" aria-hidden="true">⌫</span>
             <span>Trash</span>
             <strong>{trashTasks.length}</strong>
+          </button>
+
+          <button type="button" className="workspace-nav-button" onClick={onOpenSettings}>
+            Settings
           </button>
 
           <ColumnForm onCreateColumn={handleCreateColumn} isBusy={isMutating} />

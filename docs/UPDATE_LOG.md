@@ -1,7 +1,50 @@
 # MiniTrello - Feature and Bug Fix Log
 
+## v8 - Supabase Google Auth migration
+
+- Replaced Firebase Authentication and Third-Party JWTs with Supabase Google Auth.
+- `public.users.id` now equals `auth.users.id`; RPCs and RLS derive identity from
+  `auth.uid()` and use the native `authenticated` database role.
+- Added an `auth.users` trigger and idempotent bootstrap RPC for application profiles.
+- Replaced hashed Gmail transfer codes with Supabase manual Google identity linking.
+- Removed Firebase environment variables, SDK package, client code, `firebase_uid`,
+  transfer table, anonymous auth workaround, Broadcast workaround and interval polling.
+- Restored authenticated Postgres Changes as the only cross-session board sync path.
+
+## Realtime filtering fix
+
+- Split filtered `INSERT`/`UPDATE` subscriptions from unfiltered `DELETE`
+  subscriptions because Supabase Postgres Changes does not support filtering
+  delete events.
+- Added `REPLICA IDENTITY FULL`, subscription status refreshes and channel-error
+  diagnostics for board, workspace context and dashboard Realtime.
+- Board synchronization relies on event-driven Realtime only; no interval polling
+  repeatedly downloads the complete board as task volume grows.
+- The temporary Broadcast fallback was removed in v8 after authentication moved to
+  native Supabase sessions.
+
+## v7 Login Gmail transfer (replaced in v8)
+
+- Added hashed, expiring one-time transfer codes to the unified reset schema.
+- Account Settings can re-authenticate the current Google user, sign out, and let
+  the target Gmail claim the retained MiniTrello UUID.
+- Active target accounts, Super Admin profiles, workspace owners and members are
+  rejected instead of merging data.
+- Requires JWT `auth_time` within five minutes; the secret expires after ten
+  minutes, allows five failures and is row-locked during claim.
+- Retains `users.id`, display name, workspaces, memberships and roles while replacing
+  only Firebase UID, email and avatar.
+
+## v7 authentication and global Super Admin
+
+- Replaced URL-selected fake users with Firebase Google Authentication.
+- Added automatic Supabase profile creation from verified Firebase JWT claims.
+- Removed actor IDs from public RPC signatures and enforced authenticated RLS.
+- Added a database-managed global `super_admin` role with access to every workspace.
+- Added Gmail-based member management, authenticated Realtime, and auth-only routes.
+
 **Project name:** MiniTrello  
-**Stack:** React + Vite + Supabase Postgres + Supabase Realtime  
+**Current stack:** React + Vite + Supabase Auth/Postgres/Realtime
 **Purpose:** Document each major version, the features added, the bugs found, and the concrete implementation fixes used while building MiniTrello.
 
 ---
@@ -1048,3 +1091,35 @@ The document title and project references should use **MiniTrello**.
 - `.app-shell` uses a fixed viewport-height flex layout with document overflow disabled.
 - `.board-wrapper` is the flexible, min-height-safe remainder of the workspace.
 - `.board` provides a definite height so viewport-relative column limits work without hard-coded header offsets.
+
+---
+
+## v17 - Multi-Workspace Fake-User Foundation
+
+### Behavior before this change
+
+- Every visitor opened the same global board because columns, tasks and labels had no workspace ownership.
+- There were no users, memberships, roles, account page or nested workspace URLs.
+- Anonymous RLS policies allowed anyone to write directly to every board table.
+
+### Data model and server changes
+
+- Rebuilt the schema around `users`, `roles`, `workspaces` and `workspace_members`.
+- Added `workspace_id` to columns, tasks and labels, plus triggers that reject cross-workspace task/column and task/label relationships.
+- Added membership/admin validation RPCs, transactional workspace create/join/member operations, and one workspace-scoped board command endpoint.
+- Added `seed_minitrello_demo()` with four deterministic fake users, two workspaces and board fixtures.
+- Preserved Realtime reads for the fake-user phase while revoking anonymous direct writes; the seed function is not exposed to the client.
+
+### Frontend changes
+
+- Added dependency-free routes for user selection, dashboard, My Account and UUID-based workspace boards.
+- Added workspace creation, code joining, workspace switching and direct-route validation.
+- Added Workspace Settings with join-code copy, member list, admin/member roles, add by UUID, promote, demote and kick.
+- Added admin-only permanent workspace deletion with exact-name confirmation and cascading cleanup of board data and memberships.
+- Scoped every board service call and Realtime board refresh to the active workspace.
+- Added membership Realtime handling so role changes and kicks update active clients.
+- Added a Vercel SPA rewrite so direct workspace URLs survive refresh.
+
+### Deferred security work
+
+Fake user IDs can be impersonated because they come from the URL. Gmail login, email changes, `auth.uid()` identity and private membership RLS are intentionally deferred to the next authentication phase.

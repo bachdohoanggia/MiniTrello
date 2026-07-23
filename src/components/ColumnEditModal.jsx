@@ -24,7 +24,6 @@ export default function ColumnEditModal({ column, isBusy, onClose, onSave }) {
             <p className="modal-kicker">Column settings</p>
             <h2 id="edit-column-title">Rename Column</h2>
           </div>
-          <button className="icon-button" type="button" onClick={onClose} disabled={isBusy}>Close</button>
         </div>
 
         <form className="task-form" onSubmit={handleSubmit}>
@@ -34,7 +33,7 @@ export default function ColumnEditModal({ column, isBusy, onClose, onSave }) {
           </label>
           <div className="form-actions">
             <button type="button" className="secondary" onClick={onClose} disabled={isBusy}>Cancel</button>
-            <button type="submit" disabled={isBusy || !name.trim() || name.trim() === column.name}>
+            <button type="submit" className="primary-action" disabled={isBusy || !name.trim() || name.trim() === column.name}>
               {isBusy ? 'Saving…' : 'Save Changes'}
             </button>
           </div>

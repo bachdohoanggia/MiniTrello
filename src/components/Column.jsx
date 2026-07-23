@@ -175,7 +175,6 @@ export default function Column({
             onPointerMove={handleColumnPointerMove}
             onPointerUp={handleColumnPointerUp}
             onPointerCancel={handleColumnPointerUp}
-            title="Drag to move column"
             aria-label={`Drag ${column.name} column`}
           >
             ⋮⋮

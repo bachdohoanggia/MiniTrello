@@ -51,9 +51,6 @@ export default function TaskForm({ isOpen, columns, defaultColumnId, isBusy, onC
             <p className="modal-kicker">New card</p>
             <h2>Add Task</h2>
           </div>
-          <button className="icon-button" onClick={onClose} type="button" disabled={isBusy}>
-            Close
-          </button>
         </div>
 
         <form className="task-form" onSubmit={handleSubmit}>

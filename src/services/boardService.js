@@ -8,259 +8,75 @@ function requireSupabase() {
 }
 
 function throwIfError(error) {
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 }
 
-export async function fetchBoard() {
-  const client = requireSupabase();
+async function boardCommand(workspaceId, action, payload = {}) {
+  const { data, error } = await requireSupabase().rpc('workspace_board_command', {
+    p_workspace_id: workspaceId,
+    p_action: action,
+    p_payload: payload,
+  });
+  throwIfError(error);
+  return data;
+}
 
-  const [columnsResult, activeTasksResult, trashTasksResult, labelsResult, taskLabelsResult] = await Promise.all([
-    client.from('columns').select('*').order('position', { ascending: true }),
-    client.from('tasks').select('*').is('deleted_at', null).order('position', { ascending: true }),
-    client.from('tasks').select('*').not('deleted_at', 'is', null).order('deleted_at', { ascending: false }),
-    client.from('labels').select('*').order('name', { ascending: true }),
-    client.from('task_labels').select('*'),
-  ]);
-
-  throwIfError(columnsResult.error);
-  throwIfError(activeTasksResult.error);
-  throwIfError(trashTasksResult.error);
-  throwIfError(labelsResult.error);
-  throwIfError(taskLabelsResult.error);
-
+export async function fetchBoard(workspaceId) {
+  const { data, error } = await requireSupabase().rpc('get_workspace_board', {
+    p_workspace_id: workspaceId,
+  });
+  throwIfError(error);
   return {
-    columns: columnsResult.data ?? [],
-    tasks: activeTasksResult.data ?? [],
-    trashTasks: trashTasksResult.data ?? [],
-    labels: labelsResult.data ?? [],
-    taskLabels: taskLabelsResult.data ?? [],
+    columns: data?.columns ?? [],
+    tasks: data?.tasks ?? [],
+    trashTasks: data?.trashTasks ?? [],
+    labels: data?.labels ?? [],
+    taskLabels: data?.taskLabels ?? [],
   };
 }
 
-export async function deleteExpiredTrashTasks(days = 30) {
-  const client = requireSupabase();
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+export const deleteExpiredTrashTasks = (workspaceId, days = 30) =>
+  boardCommand(workspaceId, 'cleanup_trash', { days });
 
-  const { error } = await client
-    .from('tasks')
-    .delete()
-    .not('deleted_at', 'is', null)
-    .lt('deleted_at', cutoff);
+export const createColumn = (workspaceId, name) =>
+  boardCommand(workspaceId, 'create_column', { name, position: Date.now() });
 
-  throwIfError(error);
-}
+export const updateColumn = (workspaceId, columnId, updates) =>
+  boardCommand(workspaceId, 'update_column', { id: columnId, ...updates });
 
-export async function createColumn(name) {
-  const client = requireSupabase();
-
-  const { error } = await client.from('columns').insert({
-    name,
-    position: Date.now(),
+export const updateColumnPositions = (workspaceId, columns) =>
+  boardCommand(workspaceId, 'reorder_columns', {
+    items: columns.map((column, index) => ({ id: column.id, position: index + 1 })),
   });
 
-  throwIfError(error);
-}
+export const deleteColumnAndTrashTasks = (workspaceId, column) =>
+  boardCommand(workspaceId, 'delete_column', { id: column.id });
 
-export async function updateColumn(columnId, updates) {
-  const client = requireSupabase();
+export const createTask = (workspaceId, task) =>
+  boardCommand(workspaceId, 'create_task', { ...task, position: Date.now() });
 
-  const { error } = await client
-    .from('columns')
-    .update(updates)
-    .eq('id', columnId);
+export const updateTask = (workspaceId, taskId, updates) =>
+  boardCommand(workspaceId, 'update_task', { id: taskId, ...updates });
 
-  throwIfError(error);
-}
+export const moveTask = (workspaceId, taskId, newColumnId) =>
+  boardCommand(workspaceId, 'move_task', { id: taskId, column_id: newColumnId });
 
-export async function updateColumnPositions(columns) {
-  const client = requireSupabase();
-
-  const updates = columns.map((column, index) =>
-    client
-      .from('columns')
-      .update({ position: index + 1 })
-      .eq('id', column.id)
-  );
-
-  const results = await Promise.all(updates);
-  results.forEach((result) => throwIfError(result.error));
-}
-
-export async function deleteColumnAndTrashTasks(column) {
-  const client = requireSupabase();
-  const deletedAt = new Date().toISOString();
-
-  const trashResult = await client
-    .from('tasks')
-    .update({
-      deleted_at: deletedAt,
-      trashed_from_column_id: column.id,
-      trashed_from_column_name: column.name,
-    })
-    .eq('column_id', column.id)
-    .is('deleted_at', null);
-
-  throwIfError(trashResult.error);
-
-  const deleteResult = await client
-    .from('columns')
-    .delete()
-    .eq('id', column.id);
-
-  throwIfError(deleteResult.error);
-}
-
-export async function createTask(task) {
-  const client = requireSupabase();
-
-  const { error } = await client.from('tasks').insert({
-    column_id: task.column_id,
-    title: task.title,
-    description: task.description,
-    priority: task.priority || null,
-    due_date: task.due_date || null,
-    position: Date.now(),
+export const updateTaskPositions = (workspaceId, tasks) =>
+  boardCommand(workspaceId, 'reorder_tasks', {
+    items: tasks.map((task, index) => ({ id: task.id, column_id: task.column_id, position: index + 1 })),
   });
 
-  throwIfError(error);
-}
+export const trashTask = (workspaceId, task) =>
+  boardCommand(workspaceId, 'trash_task', { id: task.id });
 
-export async function updateTask(taskId, updates) {
-  const client = requireSupabase();
+export const restoreTask = (workspaceId, taskId, columnId) =>
+  boardCommand(workspaceId, 'restore_task', { id: taskId, column_id: columnId });
 
-  const { error } = await client
-    .from('tasks')
-    .update({
-      ...updates,
-      priority: updates.priority || null,
-      due_date: updates.due_date || null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', taskId);
+export const emptyTrash = (workspaceId) => boardCommand(workspaceId, 'empty_trash');
 
-  throwIfError(error);
-}
+export const createLabel = (workspaceId, label) => boardCommand(workspaceId, 'create_label', label);
 
-export async function moveTask(taskId, newColumnId) {
-  const client = requireSupabase();
+export const deleteLabel = (workspaceId, labelId) => boardCommand(workspaceId, 'delete_label', { id: labelId });
 
-  const { error } = await client
-    .from('tasks')
-    .update({
-      column_id: newColumnId,
-      position: Date.now(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', taskId);
-
-  throwIfError(error);
-}
-
-export async function updateTaskPositions(tasks) {
-  const client = requireSupabase();
-
-  const updates = tasks.map((task, index) =>
-    client
-      .from('tasks')
-      .update({
-        column_id: task.column_id,
-        position: index + 1,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', task.id)
-  );
-
-  const results = await Promise.all(updates);
-  results.forEach((result) => throwIfError(result.error));
-}
-
-export async function trashTask(task, column) {
-  const client = requireSupabase();
-
-  const { error } = await client
-    .from('tasks')
-    .update({
-      deleted_at: new Date().toISOString(),
-      trashed_from_column_id: column?.id || task.column_id || null,
-      trashed_from_column_name: column?.name || null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', task.id);
-
-  throwIfError(error);
-}
-
-export async function restoreTask(taskId, columnId) {
-  const client = requireSupabase();
-
-  const { error } = await client
-    .from('tasks')
-    .update({
-      column_id: columnId,
-      deleted_at: null,
-      trashed_from_column_id: null,
-      trashed_from_column_name: null,
-      position: Date.now(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', taskId);
-
-  throwIfError(error);
-}
-
-export async function emptyTrash() {
-  const client = requireSupabase();
-
-  const { error } = await client
-    .from('tasks')
-    .delete()
-    .not('deleted_at', 'is', null);
-
-  throwIfError(error);
-}
-
-export async function createLabel(label) {
-  const client = requireSupabase();
-
-  const { error } = await client.from('labels').insert({
-    name: label.name,
-    color: label.color || '#64748b',
-  });
-
-  throwIfError(error);
-}
-
-export async function deleteLabel(labelId) {
-  const client = requireSupabase();
-
-  const { error } = await client
-    .from('labels')
-    .delete()
-    .eq('id', labelId);
-
-  throwIfError(error);
-}
-
-export async function toggleTaskLabel(taskId, labelId, isAssigned) {
-  const client = requireSupabase();
-
-  if (isAssigned) {
-    const { error } = await client
-      .from('task_labels')
-      .delete()
-      .eq('task_id', taskId)
-      .eq('label_id', labelId);
-
-    throwIfError(error);
-    return;
-  }
-
-  const { error } = await client.from('task_labels').insert({
-    task_id: taskId,
-    label_id: labelId,
-  });
-
-  throwIfError(error);
-}
+export const toggleTaskLabel = (workspaceId, taskId, labelId) =>
+  boardCommand(workspaceId, 'toggle_task_label', { task_id: taskId, label_id: labelId });

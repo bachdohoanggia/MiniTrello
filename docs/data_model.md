@@ -1,72 +1,29 @@
-# Data Model
+# MiniTrello v8 data model
 
-TaskFlow Board uses Supabase Postgres.
-
-## Tables
-
-### `columns`
-
-Stores Kanban columns.
-
-| Column | Purpose |
-|---|---|
-| `id` | Unique column ID |
-| `name` | Column name, such as To Do or Review |
-| `position` | Column order on the board |
-| `created_at` | Creation timestamp |
-
-### `tasks`
-
-Stores cards/tasks.
-
-| Column | Purpose |
-|---|---|
-| `id` | Unique task ID |
-| `column_id` | Current column while active |
-| `title` | Task name |
-| `description` | Detailed description shown in the modal |
-| `priority` | Optional low, medium, or high priority |
-| `due_date` | Optional due date |
-| `position` | Task order/move timestamp |
-| `deleted_at` | If set, the task is in Trash |
-| `trashed_from_column_id` | Original column ID before Trash |
-| `trashed_from_column_name` | Original column name before Trash |
-| `created_at` | Creation timestamp |
-| `updated_at` | Last update timestamp |
-
-### `labels`
-
-Stores reusable labels like email labels.
-
-| Column | Purpose |
-|---|---|
-| `id` | Unique label ID |
-| `name` | Label name |
-| `color` | Label color |
-| `created_at` | Creation timestamp |
-
-### `task_labels`
-
-Many-to-many join table between tasks and labels.
-
-| Column | Purpose |
-|---|---|
-| `task_id` | Task ID |
-| `label_id` | Label ID |
-| `created_at` | Assignment timestamp |
-
-## Relationships
+Supabase Auth owns login identity. The application profile uses the same UUID.
 
 ```text
-columns 1 ─── many tasks
-
-tasks many ─── many labels
+auth.users.id ──1:1── public.users.id
+                          │
+                          ├──< workspace_members >── workspaces
+                          │                            ├── columns
+                          │                            ├── tasks
+                          │                            └── labels
+                          └── global_role
 ```
 
-## Trash design
+| Table | Important fields | Purpose |
+|---|---|---|
+| `auth.users` / `auth.identities` | Supabase UUID, Google identities | Login session and linked Google accounts |
+| `public.users` | `id`, `email`, `display_name`, `avatar_url`, `global_role` | App profile and global authorization |
+| `roles` | `key` | Workspace roles: `admin`, `member` |
+| `workspaces` | `id`, `created_by`, `join_code` | Workspace identity and creator |
+| `workspace_members` | `workspace_id`, `user_id`, `role_key` | Per-workspace membership |
+| `columns`, `tasks`, `labels`, `task_labels` | Workspace-scoped foreign keys | Kanban data |
 
-Trash is implemented as a soft delete. A task is in Trash when `deleted_at` is not null.
+The old `firebase_uid` and `account_login_transfers` model no longer exists.
+Selecting a linked Google identity updates only `public.users.email` and avatar.
+The primary UUID and every foreign key remain unchanged.
 
-When a task is deleted, it is not removed from the database. The app sets `deleted_at` and remembers the original column.
-
-When a column is deleted, tasks in that column are moved to Trash first, then the column is deleted.
+`global_role=super_admin` grants access through authorization helpers and does not
+require workspace membership. Public RPCs accept no browser-supplied actor ID.
