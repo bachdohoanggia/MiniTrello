@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../AuthContext.jsx';
+import BrandLogo from './BrandLogo.jsx';
 
 export default function LoginPage() {
   const { login, configured, error: authError } = useAuth();
@@ -17,7 +18,7 @@ export default function LoginPage() {
       <section className="portal-card login-card">
         <div className="login-copy">
           <div className="login-brand">
-            <div className="brand-mark">MT</div>
+            <BrandLogo />
             <div><p className="eyebrow">MiniTrello</p><strong>Work, made visible.</strong></div>
           </div>
 
@@ -47,7 +48,7 @@ export default function LoginPage() {
           <div className="preview-glow preview-glow-two" />
           <div className="preview-window">
             <div className="preview-toolbar">
-              <div><span className="preview-logo">MT</span><strong>Launch plan</strong></div>
+              <div><BrandLogo className="preview-logo" alt="" /><strong>Launch plan</strong></div>
               <span className="preview-people">A&nbsp;&nbsp;B&nbsp;&nbsp;+2</span>
             </div>
             <div className="preview-board">

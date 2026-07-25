@@ -7,6 +7,7 @@ import TaskDetailModal from './components/TaskDetailModal.jsx';
 import TrashDrawer from './components/TrashDrawer.jsx';
 import ConfirmDialog from './components/ConfirmDialog.jsx';
 import ColumnEditModal from './components/ColumnEditModal.jsx';
+import BrandLogo from './components/BrandLogo.jsx';
 import {
   createColumn,
   createLabel,
@@ -457,8 +458,8 @@ export default function App({ workspaceId, workspaceContext, onNavigate, onOpenS
   return (
     <main className="app-shell">
       <header className="workspace-header">
-        <div className="brand-block" aria-label="TaskFlow Board">
-          <div className="brand-mark">MT</div>
+        <div className="brand-block" aria-label="MiniTrello workspace">
+          <BrandLogo alt="" />
           <div>
             <p className="eyebrow">{workspaceContext?.current_role || 'member'} workspace</p>
             <h1>{workspaceContext?.workspace?.name || 'MiniTrello'}</h1>

@@ -3,6 +3,7 @@ import App from './App.jsx';
 import LoginPage from './components/LoginPage.jsx';
 import UserDashboard from './components/UserDashboard.jsx';
 import AccountPage from './components/AccountPage.jsx';
+import BrandLogo from './components/BrandLogo.jsx';
 import WorkspaceSettings from './components/WorkspaceSettings.jsx';
 import { fetchWorkspaceContext } from './services/workspaceService.js';
 import { supabase } from './supabaseClient.js';
@@ -112,5 +113,5 @@ export default function RootApp() {
 }
 
 function PageState({ title, message, onBack }) {
-  return <main className="portal-shell"><section className="portal-card page-state-card"><div className="brand-mark">MT</div><h1>{title}</h1>{message && <p>{message}</p>}{onBack && <button type="button" onClick={onBack}>Back to dashboard</button>}</section></main>;
+  return <main className="portal-shell"><section className="portal-card page-state-card"><BrandLogo /><h1>{title}</h1>{message && <p>{message}</p>}{onBack && <button type="button" onClick={onBack}>Back to dashboard</button>}</section></main>;
 }
