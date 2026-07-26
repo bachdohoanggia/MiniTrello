@@ -46,6 +46,7 @@ export default function App({ workspaceId, workspaceContext, onNavigate, onOpenS
   const [trashTasks, setTrashTasks] = useState([]);
   const [labels, setLabels] = useState([]);
   const [taskLabels, setTaskLabels] = useState([]);
+  const [taskAssignees, setTaskAssignees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -69,6 +70,10 @@ export default function App({ workspaceId, workspaceContext, onNavigate, onOpenS
   const selectedTask = useMemo(
     () => tasks.find((task) => task.id === selectedTaskId) || null,
     [tasks, selectedTaskId]
+  );
+  const assignableMembers = useMemo(
+    () => (workspaceContext?.members || []).filter((member) => !member.is_virtual),
+    [workspaceContext?.members]
   );
 
   const labelTaskCounts = useMemo(() => {
@@ -165,6 +170,7 @@ export default function App({ workspaceId, workspaceContext, onNavigate, onOpenS
       setTrashTasks(board.trashTasks);
       setLabels(board.labels);
       setTaskLabels(board.taskLabels);
+      setTaskAssignees(board.taskAssignees);
     } catch (err) {
       showError(err);
     } finally {
@@ -232,6 +238,9 @@ export default function App({ workspaceId, workspaceContext, onNavigate, onOpenS
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'labels', filter: `workspace_id=eq.${workspaceId}` }, scheduleBoardRefresh)
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'labels' }, scheduleBoardRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'task_labels' }, scheduleBoardRefresh)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'task_assignees', filter: `workspace_id=eq.${workspaceId}` }, scheduleBoardRefresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'task_assignees', filter: `workspace_id=eq.${workspaceId}` }, scheduleBoardRefresh)
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'task_assignees' }, scheduleBoardRefresh)
       .subscribe((status, channelError) => {
         if (status === 'SUBSCRIBED') scheduleBoardRefresh();
         console.info('Board Realtime status:', status, channelError || '');
@@ -578,6 +587,8 @@ export default function App({ workspaceId, workspaceContext, onNavigate, onOpenS
           tasks={visibleTasks}
           labels={labels}
           taskLabels={taskLabels}
+          taskAssignees={taskAssignees}
+          members={assignableMembers}
           hasActiveFilters={Boolean(searchQuery.trim() || selectedLabelIds.length > 0)}
           onAddTask={openCreateTaskForm}
           onOpenTask={openTaskDetails}
@@ -593,6 +604,7 @@ export default function App({ workspaceId, workspaceContext, onNavigate, onOpenS
       <TaskForm
         isOpen={taskForm.isOpen}
         columns={columns}
+        members={assignableMembers}
         defaultColumnId={taskForm.defaultColumnId}
         onClose={closeTaskForm}
         onSubmit={handleSubmitTask}
@@ -604,6 +616,8 @@ export default function App({ workspaceId, workspaceContext, onNavigate, onOpenS
         columns={columns}
         labels={labels}
         taskLabels={taskLabels}
+        taskAssignees={taskAssignees}
+        members={assignableMembers}
         onClose={closeTaskDetails}
         onSave={handleSaveTask}
         onDelete={handleTrashTask}

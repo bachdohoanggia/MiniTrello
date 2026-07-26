@@ -19,9 +19,11 @@ function findColumnIdAtPoint(x, y) {
 
 export default function Column({
   column,
-  tasks,
-  labels,
-  taskLabels,
+  tasks = [],
+  labels = [],
+  taskLabels = [],
+  taskAssignees = [],
+  members = [],
   hasActiveFilters,
   onAddTask,
   onOpenTask,
@@ -209,6 +211,8 @@ export default function Column({
               task={task}
               labels={labels}
               taskLabels={taskLabels}
+              taskAssignees={taskAssignees}
+              members={members}
               onOpenTask={onOpenTask}
               onMoveTask={onMoveTask}
               onReorderTask={onReorderTask}

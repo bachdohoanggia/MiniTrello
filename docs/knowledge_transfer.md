@@ -1,7 +1,7 @@
-# MiniTrello v8 knowledge transfer
+# MiniTrello v9 knowledge transfer
 
 MiniTrello uses Supabase Google Auth, Postgres, RPCs, RLS and Realtime. Run the
-destructive `supabase/schema.sql` once for a fresh v8 database, enable the Google
+destructive `supabase/schema.sql` once for a fresh v9 database, enable the Google
 provider and manual identity linking in Supabase, and configure only the two
 variables in `.env.example` locally and in Vercel.
 
@@ -10,7 +10,8 @@ Key files:
 - `src/AuthContext.jsx`: Supabase OAuth/session/profile bootstrap and identity APIs.
 - `src/RootApp.jsx`: authenticated routing.
 - `src/services/`: authenticated RPC calls without actor IDs.
-- `supabase/schema.sql`: v8 profile trigger, authorization, RPCs, RLS and Realtime.
+- `supabase/schema.sql`: v9 profile trigger, authorization, RPCs, RLS, task
+  assignees and Realtime.
 - `docs/AUTH_SUPER_ADMIN.md`: setup, Firebase shutdown and promotion instructions.
 
 A Gmail must sign in once before an admin can add it by email. Promote the first
@@ -29,6 +30,18 @@ Realtime comes from PostgreSQL tables published through `supabase_realtime`, not
 from React itself. Board, workspace-context and dashboard channels listen for
 Postgres Changes and debounce the corresponding RPC fetch by 120 ms. There is no
 interval polling.
+
+Task assignees live in `task_assignees`. The composite foreign key to
+`workspace_members` is the security invariant: only a real member of that exact
+workspace can be assigned, and kicking the member cascades the assignment away.
+Do not replace it with a plain `users.id` foreign key or virtual Super Admin could
+be assignable without membership.
+
+Both Add Task and Task Detail use `MemberPicker.jsx`. Add Task starts with no
+assignee and resets after close/create. Task Detail initializes
+`draftAssigneeIds` from board state; only Save sends them to
+`workspace_board_command`. Task cards join the returned assignment links to
+workspace context in React and render at most three avatars plus a `+N` badge.
 
 When the browser returns to a tab, Supabase may refresh its token. Do not use whole
 session/user/route objects as workspace loader dependencies. `AuthContext` treats

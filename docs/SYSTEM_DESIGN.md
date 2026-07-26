@@ -1,4 +1,4 @@
-# MiniTrello v8 system design
+# MiniTrello v9 system design
 
 ```text
 Google OAuth → Supabase Auth session
@@ -41,7 +41,9 @@ Board mutation
 
 Realtime responsibilities are split into three channels:
 
-- `App.jsx`: columns, tasks, labels and task-label links for the open board.
+- `App.jsx`: columns, tasks, labels, task-label links and task-assignee links for
+  the open board. Assignee delete events use an unfiltered listener so unassign
+  and member-removal changes are not missed.
 - `RootApp.jsx`: workspace metadata, members and public user context.
 - `UserDashboard.jsx`: visible workspaces, memberships and profile role changes.
 
@@ -54,3 +56,11 @@ channels. This optimization does not disable or bypass Realtime.
 The login page is intentionally neutral for both first-time and returning users.
 The same **Continue with Google** action either restores an existing Supabase user
 or creates `auth.users` and `public.users` rows on first sign-in.
+
+Task assignment is a many-to-many relation, not an authorization boundary.
+`get_workspace_board()` returns `taskAssignees`, while
+`get_workspace_context()` supplies each real member's name, Gmail and avatar.
+Add Task sends selected assignees on create. Task Detail keeps
+`draftAssigneeIds` in local React state and writes them only with **Save
+Changes**, atomically with task fields and label links. Cancelling or closing the
+modal discards that draft, and every workspace member continues to see the task.

@@ -1,4 +1,4 @@
-# MiniTrello v8 data model
+# MiniTrello v9 data model
 
 Supabase Auth owns login identity. The application profile uses the same UUID.
 
@@ -7,7 +7,7 @@ auth.users.id ──1:1── public.users.id
                           │
                           ├──< workspace_members >── workspaces
                           │                            ├── columns
-                          │                            ├── tasks
+                          │                            ├── tasks ──< task_assignees >── workspace_members
                           │                            └── labels
                           └── global_role
 ```
@@ -20,6 +20,7 @@ auth.users.id ──1:1── public.users.id
 | `workspaces` | `id`, `created_by`, `join_code` | Workspace identity and creator |
 | `workspace_members` | `workspace_id`, `user_id`, `role_key` | Per-workspace membership |
 | `columns`, `tasks`, `labels`, `task_labels` | Workspace-scoped foreign keys | Kanban data |
+| `task_assignees` | `workspace_id`, `task_id`, `user_id`, `assigned_at` | Many-to-many assignment between tasks and real workspace members |
 
 The old `firebase_uid` and `account_login_transfers` model no longer exists.
 Selecting a linked Google identity updates only `public.users.email` and avatar.
@@ -27,6 +28,29 @@ The primary UUID and every foreign key remain unchanged.
 
 `global_role=super_admin` grants access through authorization helpers and does not
 require workspace membership. Public RPCs accept no browser-supplied actor ID.
+
+## Task assignee integrity
+
+`task_assignees` has primary key `(task_id, user_id)` so the same member cannot be
+assigned twice. Its two composite foreign keys guarantee that both the task and
+the assignee belong to `workspace_id`:
+
+```sql
+foreign key (workspace_id, task_id)
+  references tasks(workspace_id, id) on delete cascade;
+
+foreign key (workspace_id, user_id)
+  references workspace_members(workspace_id, user_id) on delete cascade;
+```
+
+This rejects users outside the workspace and the virtual Super Admin presence,
+because neither has a matching real membership row. Deleting a task or removing a
+member cascades to assignments. Moving a task to Trash does not delete the task,
+so its assignments remain and return when the task is restored.
+
+`workspace_board_command` validates `assignee_ids` again before writing.
+`update_task` synchronizes the task row, labels and assignees in one PostgreSQL
+transaction. Any validation or write error rolls back all three parts.
 
 ## UUID identity and Gmail lookup
 
@@ -59,3 +83,8 @@ force relationship updates whenever the login Gmail changes.
 All application tables use RLS and `REPLICA IDENTITY FULL`, then are added to the
 `supabase_realtime` publication. PostgreSQL remains the source of truth; Realtime
 only transports authorized row-change events to connected clients.
+
+`task_assignees` is published too. Insert/update listeners are filtered by
+workspace; delete listeners are intentionally unfiltered because Postgres Changes
+does not support filters on delete events. RLS and the subsequent board RPC still
+control which rows become visible in React.

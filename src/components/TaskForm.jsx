@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import RichTextEditor from './RichTextEditor.jsx';
+import MemberPicker from './MemberPicker.jsx';
 import { cleanRichText } from '../utils/richText.js';
 
 const blankForm = {
@@ -8,9 +9,10 @@ const blankForm = {
   priority: '',
   due_date: '',
   column_id: '',
+  assignee_ids: [],
 };
 
-export default function TaskForm({ isOpen, columns, defaultColumnId, isBusy, onClose, onSubmit }) {
+export default function TaskForm({ isOpen, columns = [], members = [], defaultColumnId, isBusy, onClose, onSubmit }) {
   const [formData, setFormData] = useState(blankForm);
 
   function resetForm() {
@@ -24,6 +26,15 @@ export default function TaskForm({ isOpen, columns, defaultColumnId, isBusy, onC
     if (!isOpen) return;
     resetForm();
   }, [isOpen, defaultColumnId]);
+
+  useEffect(() => {
+    const availableMemberIds = new Set(members.map((member) => member.user_id));
+    setFormData((current) => {
+      const assigneeIds = current.assignee_ids.filter((userId) => availableMemberIds.has(userId));
+      if (assigneeIds.length === current.assignee_ids.length) return current;
+      return { ...current, assignee_ids: assigneeIds };
+    });
+  }, [members]);
 
   if (!isOpen) return null;
 
@@ -39,14 +50,14 @@ export default function TaskForm({ isOpen, columns, defaultColumnId, isBusy, onC
     if (!cleanTitle) return;
     if (!formData.column_id) return;
 
-    await onSubmit({
+    const wasCreated = await onSubmit({
       ...formData,
       title: cleanTitle,
       description: cleanRichText(formData.description),
       priority: formData.priority || null,
       due_date: formData.due_date || null,
     });
-    resetForm();
+    if (wasCreated) resetForm();
   }
 
   function handleClose() {
@@ -83,6 +94,16 @@ export default function TaskForm({ isOpen, columns, defaultColumnId, isBusy, onC
               value={formData.description}
               onChange={(description) => setFormData((current) => ({ ...current, description }))}
               placeholder="You can also add details later by clicking the card."
+              disabled={isBusy}
+            />
+          </div>
+
+          <div className="task-form-field">
+            <span className="task-form-field-label">Assignees <span className="optional-text">optional</span></span>
+            <MemberPicker
+              members={members}
+              selectedIds={formData.assignee_ids}
+              onChange={(assigneeIds) => setFormData((current) => ({ ...current, assignee_ids: assigneeIds }))}
               disabled={isBusy}
             />
           </div>

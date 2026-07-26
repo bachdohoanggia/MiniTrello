@@ -1,10 +1,12 @@
 import Column from './Column.jsx';
 
 export default function Board({
-  columns,
-  tasks,
-  labels,
-  taskLabels,
+  columns = [],
+  tasks = [],
+  labels = [],
+  taskLabels = [],
+  taskAssignees = [],
+  members = [],
   hasActiveFilters,
   onAddTask,
   onOpenTask,
@@ -37,6 +39,8 @@ export default function Board({
               tasks={columnTasks}
               labels={labels}
               taskLabels={taskLabels}
+              taskAssignees={taskAssignees}
+              members={members}
               hasActiveFilters={hasActiveFilters}
               onAddTask={onAddTask}
               onOpenTask={onOpenTask}

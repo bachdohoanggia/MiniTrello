@@ -1,5 +1,6 @@
 import { useRef } from 'react';
 import { getLabelStyle } from '../utils/labelStyles.js';
+import MemberAvatar from './MemberAvatar.jsx';
 
 function formatDueDate(value) {
   if (!value) return null;
@@ -25,6 +26,16 @@ function getLabelsForTask(task, labels, taskLabels) {
   return labels.filter((label) => assignedLabelIds.has(label.id));
 }
 
+function getAssigneesForTask(task, members, taskAssignees) {
+  const assignedMemberIds = new Set(
+    taskAssignees
+      .filter((item) => item.task_id === task.id)
+      .map((item) => item.user_id)
+  );
+
+  return members.filter((member) => assignedMemberIds.has(member.user_id));
+}
+
 function findColumnIdAtPoint(x, y) {
   const element = document.elementFromPoint(x, y);
   return element?.closest?.('[data-column-id]')?.dataset?.columnId || null;
@@ -35,10 +46,21 @@ function findTaskIdAtPoint(x, y) {
   return element?.closest?.('[data-task-id]')?.dataset?.taskId || null;
 }
 
-export default function TaskCard({ task, labels, taskLabels, onOpenTask, onMoveTask, onReorderTask, isBusy }) {
+export default function TaskCard({
+  task,
+  labels = [],
+  taskLabels = [],
+  taskAssignees = [],
+  members = [],
+  onOpenTask,
+  onMoveTask,
+  onReorderTask,
+  isBusy,
+}) {
   const priorityLabel = getPriorityLabel(task.priority);
   const dueDate = formatDueDate(task.due_date);
   const assignedLabels = getLabelsForTask(task, labels, taskLabels);
+  const assignedMembers = getAssigneesForTask(task, members, taskAssignees);
   const cardRef = useRef(null);
   const ignoreNextClickRef = useRef(false);
   const touchDragRef = useRef({
@@ -220,10 +242,31 @@ export default function TaskCard({ task, labels, taskLabels, onOpenTask, onMoveT
         </div>
       )}
 
-      {(dueDate || task.description) && (
+      {(dueDate || task.description || assignedMembers.length > 0) && (
         <div className="task-card-footer">
-          {dueDate && <span className="due-pill">Due {dueDate}</span>}
-          {task.description && <span className="description-dot">Description</span>}
+          <div className="task-card-metadata">
+            {dueDate && <span className="due-pill">Due {dueDate}</span>}
+            {task.description && <span className="description-dot">Description</span>}
+          </div>
+
+          {assignedMembers.length > 0 && (
+            <div
+              className="task-assignee-stack"
+              aria-label={`Assigned to ${assignedMembers.map((member) => member.display_name).join(', ')}`}
+            >
+              {assignedMembers.slice(0, 3).map((member) => (
+                <MemberAvatar member={member} size="card" key={member.user_id} />
+              ))}
+              {assignedMembers.length > 3 && (
+                <span
+                  className="task-assignee-overflow"
+                  title={assignedMembers.slice(3).map((member) => member.display_name).join(', ')}
+                >
+                  +{assignedMembers.length - 3}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
     </article>

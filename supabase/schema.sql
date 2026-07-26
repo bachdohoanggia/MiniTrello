@@ -1,10 +1,11 @@
--- MiniTrello multi-workspace schema v8 (Supabase Google Auth + global Super Admin)
+-- MiniTrello multi-workspace schema v9 (Supabase Google Auth + global Super Admin)
 -- WARNING: running this file deletes all existing MiniTrello data.
 -- Enable the Google provider in Supabase Authentication before signing in.
 
 create extension if not exists pgcrypto;
 
 drop table if exists public.account_login_transfers cascade;
+drop table if exists public.task_assignees cascade;
 drop table if exists public.task_labels cascade;
 drop table if exists public.tasks cascade;
 drop table if exists public.labels cascade;
@@ -94,11 +95,24 @@ create table public.task_labels (
   primary key (task_id, label_id)
 );
 
+create table public.task_assignees (
+  workspace_id uuid not null,
+  task_id uuid not null,
+  user_id uuid not null,
+  assigned_at timestamptz not null default now(),
+  primary key (task_id, user_id),
+  foreign key (workspace_id, task_id)
+    references public.tasks(workspace_id, id) on delete cascade,
+  foreign key (workspace_id, user_id)
+    references public.workspace_members(workspace_id, user_id) on delete cascade
+);
+
 create index workspace_members_user_idx on public.workspace_members(user_id);
 create unique index users_email_lower_idx on public.users(lower(email));
 create index columns_workspace_position_idx on public.columns(workspace_id, position);
 create index tasks_workspace_column_position_idx on public.tasks(workspace_id, column_id, position);
 create index labels_workspace_name_idx on public.labels(workspace_id, name);
+create index task_assignees_workspace_user_idx on public.task_assignees(workspace_id, user_id);
 
 create or replace function public.touch_updated_at()
 returns trigger language plpgsql as $$
@@ -317,14 +331,14 @@ declare actor uuid := public.current_app_user(); actor_is_super boolean := publi
 begin
   perform public.assert_workspace_member_or_super_admin(p_workspace_id);
   select coalesce(jsonb_agg(jsonb_build_object(
-    'user_id', u.id, 'email', u.email, 'display_name', u.display_name,
+    'user_id', u.id, 'email', u.email, 'display_name', u.display_name, 'avatar_url', u.avatar_url,
     'role_key', case when u.id = actor and actor_is_super then 'super_admin' else m.role_key end,
     'workspace_role_key', m.role_key,
     'global_role', u.global_role, 'joined_at', m.joined_at, 'is_virtual', false, 'is_current_user', u.id = actor
   ) order by case when m.role_key = 'admin' then 0 else 1 end, u.display_name), '[]'::jsonb)
   into members from public.workspace_members m join public.users u on u.id = m.user_id where m.workspace_id = p_workspace_id;
   if actor_is_super and not exists(select 1 from public.workspace_members where workspace_id = p_workspace_id and user_id = actor) then
-    select members || jsonb_build_array(jsonb_build_object('user_id', u.id, 'email', u.email, 'display_name', u.display_name,
+    select members || jsonb_build_array(jsonb_build_object('user_id', u.id, 'email', u.email, 'display_name', u.display_name, 'avatar_url', u.avatar_url,
       'role_key', 'super_admin', 'workspace_role_key', null, 'global_role', 'super_admin', 'joined_at', null, 'is_virtual', true, 'is_current_user', true))
     into members from public.users u where u.id = actor;
   end if;
@@ -353,6 +367,10 @@ begin
     'taskLabels', coalesce((
       select jsonb_agg(to_jsonb(tl)) from public.task_labels tl
       join public.tasks t on t.id = tl.task_id where t.workspace_id = p_workspace_id
+    ), '[]'::jsonb),
+    'taskAssignees', coalesce((
+      select jsonb_agg(to_jsonb(ta) order by ta.assigned_at) from public.task_assignees ta
+      where ta.workspace_id = p_workspace_id
     ), '[]'::jsonb)
   );
 end;
@@ -492,6 +510,7 @@ declare
   target_column public.columns;
   target_label public.labels;
   requested_label_ids uuid[];
+  requested_assignee_ids uuid[];
   result_row jsonb;
 begin
   perform public.assert_workspace_member_or_super_admin(p_workspace_id);
@@ -519,16 +538,40 @@ begin
       where workspace_id = p_workspace_id and column_id = target_column.id and deleted_at is null;
       delete from public.columns where id = target_column.id;
     when 'create_task' then
+      select coalesce(array_agg(distinct value::uuid), array[]::uuid[])
+      into requested_assignee_ids
+      from jsonb_array_elements_text(coalesce(p_payload->'assignee_ids', '[]'::jsonb)) selected(value);
+
+      if exists (
+        select 1
+        from unnest(requested_assignee_ids) requested(user_id)
+        left join public.workspace_members m
+          on m.workspace_id = p_workspace_id and m.user_id = requested.user_id
+        where m.user_id is null
+      ) then
+        raise exception 'One or more selected assignees do not belong to this workspace';
+      end if;
+
       insert into public.tasks(workspace_id, column_id, title, description, priority, due_date, position)
       values (p_workspace_id, (p_payload->>'column_id')::uuid, trim(p_payload->>'title'), nullif(trim(p_payload->>'description'), ''),
         nullif(p_payload->>'priority', ''), nullif(p_payload->>'due_date', '')::date,
         coalesce((p_payload->>'position')::bigint, extract(epoch from clock_timestamp()) * 1000))
       returning * into target_task;
+
+      insert into public.task_assignees(workspace_id, task_id, user_id)
+      select p_workspace_id, target_task.id, selected.user_id
+      from unnest(requested_assignee_ids) selected(user_id)
+      on conflict (task_id, user_id) do nothing;
+
       result_row := to_jsonb(target_task);
     when 'update_task' then
       select coalesce(array_agg(value::uuid), array[]::uuid[])
       into requested_label_ids
       from jsonb_array_elements_text(coalesce(p_payload->'label_ids', '[]'::jsonb)) selected(value);
+
+      select coalesce(array_agg(distinct value::uuid), array[]::uuid[])
+      into requested_assignee_ids
+      from jsonb_array_elements_text(coalesce(p_payload->'assignee_ids', '[]'::jsonb)) selected(value);
 
       if exists (
         select 1
@@ -537,6 +580,16 @@ begin
         where l.id is null
       ) then
         raise exception 'One or more selected labels do not belong to this workspace';
+      end if;
+
+      if exists (
+        select 1
+        from unnest(requested_assignee_ids) requested(user_id)
+        left join public.workspace_members m
+          on m.workspace_id = p_workspace_id and m.user_id = requested.user_id
+        where m.user_id is null
+      ) then
+        raise exception 'One or more selected assignees do not belong to this workspace';
       end if;
 
       update public.tasks set column_id = (p_payload->>'column_id')::uuid, title = trim(p_payload->>'title'),
@@ -553,6 +606,14 @@ begin
       select target_task.id, selected.label_id
       from unnest(requested_label_ids) selected(label_id)
       on conflict (task_id, label_id) do nothing;
+
+      delete from public.task_assignees
+      where task_id = target_task.id and not (user_id = any(requested_assignee_ids));
+
+      insert into public.task_assignees(workspace_id, task_id, user_id)
+      select p_workspace_id, target_task.id, selected.user_id
+      from unnest(requested_assignee_ids) selected(user_id)
+      on conflict (task_id, user_id) do nothing;
 
       result_row := to_jsonb(target_task);
     when 'move_task' then
@@ -603,6 +664,7 @@ alter table public.columns enable row level security;
 alter table public.tasks enable row level security;
 alter table public.labels enable row level security;
 alter table public.task_labels enable row level security;
+alter table public.task_assignees enable row level security;
 
 -- Realtime needs complete old rows for reliable UPDATE/DELETE replication.
 alter table public.users replica identity full;
@@ -612,6 +674,7 @@ alter table public.columns replica identity full;
 alter table public.tasks replica identity full;
 alter table public.labels replica identity full;
 alter table public.task_labels replica identity full;
+alter table public.task_assignees replica identity full;
 
 create policy "Read own user profile" on public.users for select to authenticated
   using (id = auth.uid() or public.is_super_admin()
@@ -630,10 +693,12 @@ create policy "Read accessible labels" on public.labels for select to authentica
   using (public.can_access_workspace(workspace_id));
 create policy "Read accessible task labels" on public.task_labels for select to authenticated
   using (public.is_super_admin() or exists(select 1 from public.tasks t join public.workspace_members wm on wm.workspace_id = t.workspace_id where t.id = task_labels.task_id and wm.user_id = auth.uid()));
+create policy "Read accessible task assignees" on public.task_assignees for select to authenticated
+  using (public.can_access_workspace(workspace_id));
 
-revoke insert, update, delete on public.users, public.roles, public.workspaces, public.workspace_members, public.columns, public.tasks, public.labels, public.task_labels from anon, authenticated;
-revoke all on public.users, public.roles, public.workspaces, public.workspace_members, public.columns, public.tasks, public.labels, public.task_labels from anon;
-grant select on public.users, public.roles, public.workspaces, public.workspace_members, public.columns, public.tasks, public.labels, public.task_labels to authenticated;
+revoke insert, update, delete on public.users, public.roles, public.workspaces, public.workspace_members, public.columns, public.tasks, public.labels, public.task_labels, public.task_assignees from anon, authenticated;
+revoke all on public.users, public.roles, public.workspaces, public.workspace_members, public.columns, public.tasks, public.labels, public.task_labels, public.task_assignees from anon;
+grant select on public.users, public.roles, public.workspaces, public.workspace_members, public.columns, public.tasks, public.labels, public.task_labels, public.task_assignees to authenticated;
 
 revoke execute on all functions in schema public from public, anon;
 grant execute on function public.ensure_current_user(), public.get_user_dashboard(),
@@ -649,7 +714,7 @@ grant execute on function public.current_app_user(), public.is_super_admin(), pu
 do $$
 declare table_name text;
 begin
-  foreach table_name in array array['users','workspaces','workspace_members','columns','tasks','labels','task_labels'] loop
+  foreach table_name in array array['users','workspaces','workspace_members','columns','tasks','labels','task_labels','task_assignees'] loop
     begin
       execute format('alter publication supabase_realtime add table public.%I', table_name);
     exception when duplicate_object then null;

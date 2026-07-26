@@ -32,6 +32,7 @@ export async function fetchBoard(workspaceId) {
     trashTasks: data?.trashTasks ?? [],
     labels: data?.labels ?? [],
     taskLabels: data?.taskLabels ?? [],
+    taskAssignees: data?.taskAssignees ?? [],
   };
 }
 

@@ -19,6 +19,7 @@ Production: [https://mini-trello-bice.vercel.app](https://mini-trello-bice.verce
 - Dynamic and draggable columns
 - Draggable tasks with desktop and touch support
 - Task search, priority, due date and multiple labels
+- Assign each task to one or more real workspace members
 - Trash, restore and permanent deletion
 - Supabase Realtime updates between browsers and devices
 - Responsive login, dashboard and board interfaces
@@ -94,7 +95,7 @@ Editor and select **Run**.
 The schema creates:
 
 - application users, roles, workspaces and workspace memberships;
-- columns, tasks, labels and task-label relationships;
+- columns, tasks, labels, task-label relationships and task assignees;
 - authenticated RPC functions for all mutations;
 - RLS policies for members and Super Admin;
 - automatic public-profile creation for new Auth users;
@@ -421,10 +422,18 @@ columns
 tasks
 labels
 task_labels
+task_assignees
 ```
 
 React subscribes to Postgres Changes through a Supabase Realtime WebSocket. RLS
 still controls what each signed-in user can read.
+
+Task assignment is metadata, not a visibility filter. Every workspace member can
+still read every task. Add Task and Task Detail send `assignee_ids` through the
+transactional board RPC; Task Detail saves task fields, labels and assignees
+together. The `task_assignees` foreign keys only accept real members of the same
+workspace, so the virtual Super Admin row cannot be assigned. Removing a member
+or deleting a task automatically removes the corresponding assignments.
 
 There is no periodic polling or 1.5-second automatic reload. Returning to a tab
 may refresh the Supabase token, but a refresh for the same UUID updates silently

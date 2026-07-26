@@ -1,5 +1,26 @@
 # MiniTrello - Feature and Bug Fix Log
 
+## v11 - Task assignees / Members
+
+- Added the `task_assignees` many-to-many table with composite foreign keys to
+  tasks and real workspace memberships. Assigning an outsider or virtual Super
+  Admin is rejected by the database.
+- Extended workspace context with member avatars and board payloads with
+  `taskAssignees`.
+- Extended create/update task commands with `assignee_ids`. Updating task fields,
+  labels and assignees now succeeds or rolls back as one PostgreSQL transaction.
+- Added a shared searchable multi-select Member Picker to Add Task and Task
+  Detail. Detail selections remain draft state until **Save Changes**; Cancel, X
+  and backdrop close discard them.
+- Added persistent Assignees visibility in Task Detail and stacked Google
+  avatars/initials on task cards, limited to three plus a `+N` overflow badge.
+- Published `task_assignees` to Realtime with full replica identity. Insert and
+  update events are workspace-filtered; delete events are unfiltered so other
+  sessions immediately see unassign and member-removal changes.
+- Assignment never filters task visibility and survives Trash/restore. Deleting a
+  task or kicking a member removes related assignments through cascading foreign
+  keys.
+
 ## v10 stabilization - production auth, Realtime and session UX
 
 - Added a neutral, responsive login experience for both new and returning users,
@@ -981,7 +1002,6 @@ export async function fetchTasks() {
 v1 created the foundation: React component structure, Supabase database connection, dynamic columns, task CRUD, and realtime updates.
 
 ---
-
 
 
 

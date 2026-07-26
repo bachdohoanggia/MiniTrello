@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { getLabelColorValue, getLabelStyle } from '../utils/labelStyles.js';
 import { cleanRichText } from '../utils/richText.js';
 import RichTextEditor from './RichTextEditor.jsx';
+import MemberPicker from './MemberPicker.jsx';
 
 const emptyTask = {
   title: '',
@@ -41,9 +42,11 @@ function getPriorityLabel(priority) {
 
 export default function TaskDetailModal({
   task,
-  columns,
-  labels,
-  taskLabels,
+  columns = [],
+  labels = [],
+  taskLabels = [],
+  taskAssignees = [],
+  members = [],
   onClose,
   onSave,
   onDelete,
@@ -53,6 +56,7 @@ export default function TaskDetailModal({
 }) {
   const [formData, setFormData] = useState(emptyTask);
   const [draftLabelIds, setDraftLabelIds] = useState([]);
+  const [draftAssigneeIds, setDraftAssigneeIds] = useState([]);
   const [newLabelName, setNewLabelName] = useState('');
   const [newLabelColor, setNewLabelColor] = useState('#2563eb');
 
@@ -71,6 +75,11 @@ export default function TaskDetailModal({
         .filter((item) => item.task_id === task.id)
         .map((item) => item.label_id)
     );
+    setDraftAssigneeIds(
+      taskAssignees
+        .filter((item) => item.task_id === task.id)
+        .map((item) => item.user_id)
+    );
     setNewLabelName('');
     setNewLabelColor('#2563eb');
   }, [task?.id]);
@@ -79,6 +88,11 @@ export default function TaskDetailModal({
     const availableLabelIds = new Set(labels.map((label) => label.id));
     setDraftLabelIds((current) => current.filter((labelId) => availableLabelIds.has(labelId)));
   }, [labels]);
+
+  useEffect(() => {
+    const availableMemberIds = new Set(members.map((member) => member.user_id));
+    setDraftAssigneeIds((current) => current.filter((userId) => availableMemberIds.has(userId)));
+  }, [members]);
 
   const currentColumn = useMemo(
     () => columns.find((column) => column.id === formData.column_id),
@@ -107,6 +121,7 @@ export default function TaskDetailModal({
       due_date: formData.due_date || null,
       column_id: formData.column_id,
       label_ids: draftLabelIds,
+      assignee_ids: draftAssigneeIds,
     });
   }
 
@@ -186,6 +201,21 @@ export default function TaskDetailModal({
               <input name="due_date" type="date" value={formData.due_date || ''} onChange={handleChange} />
             </label>
           </div>
+
+          <section className="detail-section assignees-section">
+            <div className="detail-section-heading">
+              <span className="detail-icon" aria-hidden="true">♙</span>
+              <h3>Assignees</h3>
+            </div>
+            <div className="detail-section-content">
+              <MemberPicker
+                members={members}
+                selectedIds={draftAssigneeIds}
+                onChange={setDraftAssigneeIds}
+                disabled={isBusy}
+              />
+            </div>
+          </section>
 
           <section className="detail-section labels-section">
             <div className="detail-section-heading">
