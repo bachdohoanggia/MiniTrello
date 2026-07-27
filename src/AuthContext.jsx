@@ -1,8 +1,26 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase, hasSupabaseConfig } from './supabaseClient.js';
-import { ensureCurrentUser } from './services/workspaceService.js';
+import { deleteCurrentAccount, ensureCurrentUser } from './services/workspaceService.js';
 
 const AuthContext = createContext(null);
+const GOOGLE_ACCOUNT_CHOOSER_KEY = 'minitrello:choose-google-account-next-login';
+
+function shouldChooseGoogleAccount() {
+  try {
+    return window.localStorage.getItem(GOOGLE_ACCOUNT_CHOOSER_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function setChooseGoogleAccount(required) {
+  try {
+    if (required) window.localStorage.setItem(GOOGLE_ACCOUNT_CHOOSER_KEY, 'true');
+    else window.localStorage.removeItem(GOOGLE_ACCOUNT_CHOOSER_KEY);
+  } catch {
+    // Authentication still works when browser storage is unavailable.
+  }
+}
 
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
@@ -82,15 +100,26 @@ export function AuthProvider({ children }) {
   async function login() {
     if (!supabase) throw new Error('Supabase configuration is missing.');
     setError('');
+    const chooseAccount = shouldChooseGoogleAccount();
+    const options = { redirectTo: `${window.location.origin}/` };
+    if (chooseAccount) {
+      options.queryParams = { prompt: 'select_account' };
+      setChooseGoogleAccount(false);
+    }
+
     const { error: loginError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: `${window.location.origin}/` },
+      options,
     });
-    if (loginError) throw loginError;
+    if (loginError) {
+      if (chooseAccount) setChooseGoogleAccount(true);
+      throw loginError;
+    }
   }
 
   async function logout() {
     if (!supabase) return;
+    setChooseGoogleAccount(true);
     const { error: logoutError } = await supabase.auth.signOut();
     if (logoutError) throw logoutError;
   }
@@ -116,6 +145,23 @@ export function AuthProvider({ children }) {
     return data;
   }
 
+  async function deleteAccount(confirmationEmail) {
+    const result = await deleteCurrentAccount(confirmationEmail);
+
+    // The Auth Admin deletion happens on the server. Clear the browser copy
+    // immediately because its access token can otherwise remain usable until
+    // the token expires.
+    setChooseGoogleAccount(true);
+    const { error: localSignOutError } = await supabase.auth.signOut({ scope: 'local' });
+    if (localSignOutError) console.warn('Account deleted, but local sign-out reported:', localSignOutError);
+    preparedUserId.current = null;
+    setSession(null);
+    setProfile(null);
+    setError('');
+    setLoading(false);
+    return result;
+  }
+
   const value = useMemo(() => ({
     session,
     user: session?.user ?? null,
@@ -128,6 +174,7 @@ export function AuthProvider({ children }) {
     linkGoogleIdentity,
     getUserIdentities,
     unlinkIdentity,
+    deleteAccount,
     configured: hasSupabaseConfig,
   }), [session, profile, loading, error]);
 

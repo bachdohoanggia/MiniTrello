@@ -57,6 +57,7 @@ export default function App({ workspaceId, workspaceContext, onNavigate, onOpenS
   const [editingColumn, setEditingColumn] = useState(null);
   const [isMutating, setIsMutating] = useState(false);
   const mutationLockRef = useRef(false);
+  const boardLoadRequestRef = useRef(0);
   const messageTimerRef = useRef(null);
   const errorTimerRef = useRef(null);
 
@@ -162,9 +163,13 @@ export default function App({ workspaceId, workspaceContext, onNavigate, onOpenS
       return;
     }
 
+    const requestId = boardLoadRequestRef.current + 1;
+    boardLoadRequestRef.current = requestId;
+
     try {
       setError('');
       const board = await fetchBoard(workspaceId);
+      if (requestId !== boardLoadRequestRef.current) return;
       setColumns(board.columns);
       setTasks(board.tasks);
       setTrashTasks(board.trashTasks);
@@ -172,9 +177,12 @@ export default function App({ workspaceId, workspaceContext, onNavigate, onOpenS
       setTaskLabels(board.taskLabels);
       setTaskAssignees(board.taskAssignees);
     } catch (err) {
+      if (requestId !== boardLoadRequestRef.current) return;
       showError(err);
     } finally {
-      setLoading(false);
+      if (requestId === boardLoadRequestRef.current) {
+        setLoading(false);
+      }
     }
   }, [workspaceId]);
 
@@ -225,8 +233,46 @@ export default function App({ workspaceId, workspaceContext, onNavigate, onOpenS
       window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => loadBoard(), 120);
     };
+    const upsertTaskAssignee = (payload) => {
+      const nextAssignment = payload.new;
+      if (!nextAssignment?.task_id || nextAssignment.workspace_id !== workspaceId) return;
 
-    const channel = supabase
+      setTaskAssignees((current) => {
+        const assignmentIndex = current.findIndex((assignment) => (
+          assignment.task_id === nextAssignment.task_id
+          && assignment.user_id === nextAssignment.user_id
+        ));
+
+        if (assignmentIndex === -1) {
+          return [...current, nextAssignment];
+        }
+
+        const nextAssignments = [...current];
+        nextAssignments[assignmentIndex] = nextAssignment;
+        return nextAssignments;
+      });
+      scheduleBoardRefresh();
+    };
+    const removeTaskAssignee = (payload) => {
+      const removedAssignment = payload.old;
+      if (!removedAssignment?.task_id) return;
+      if (removedAssignment.workspace_id && removedAssignment.workspace_id !== workspaceId) return;
+
+      setTaskAssignees((current) => current.filter((assignment) => !(
+        assignment.task_id === removedAssignment.task_id
+        && assignment.user_id === removedAssignment.user_id
+      )));
+      scheduleBoardRefresh();
+    };
+    const handleTaskAssigneeChange = (payload) => {
+      if (payload.eventType === 'DELETE') {
+        removeTaskAssignee(payload);
+        return;
+      }
+      upsertTaskAssignee(payload);
+    };
+
+    const boardChannel = supabase
       .channel(`taskflow-board-${workspaceId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'columns', filter: `workspace_id=eq.${workspaceId}` }, scheduleBoardRefresh)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'columns', filter: `workspace_id=eq.${workspaceId}` }, scheduleBoardRefresh)
@@ -238,9 +284,6 @@ export default function App({ workspaceId, workspaceContext, onNavigate, onOpenS
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'labels', filter: `workspace_id=eq.${workspaceId}` }, scheduleBoardRefresh)
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'labels' }, scheduleBoardRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'task_labels' }, scheduleBoardRefresh)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'task_assignees', filter: `workspace_id=eq.${workspaceId}` }, scheduleBoardRefresh)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'task_assignees', filter: `workspace_id=eq.${workspaceId}` }, scheduleBoardRefresh)
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'task_assignees' }, scheduleBoardRefresh)
       .subscribe((status, channelError) => {
         if (status === 'SUBSCRIBED') scheduleBoardRefresh();
         console.info('Board Realtime status:', status, channelError || '');
@@ -249,9 +292,29 @@ export default function App({ workspaceId, workspaceContext, onNavigate, onOpenS
         }
       });
 
+    // Keep assignees on one dedicated wildcard subscription. The callback
+    // scopes rows to this workspace, while a single event registration avoids
+    // deployments that acknowledge DELETE but miss a separately-filtered
+    // INSERT registration for this join table.
+    const assigneeChannel = supabase
+      .channel(`taskflow-assignees-${workspaceId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'task_assignees' },
+        handleTaskAssigneeChange
+      )
+      .subscribe((status, channelError) => {
+        if (status === 'SUBSCRIBED') scheduleBoardRefresh();
+        console.info('Assignee Realtime status:', status, channelError || '');
+        if (['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(status)) {
+          console.error('Assignee Realtime channel failed:', status, channelError);
+        }
+      });
+
     return () => {
       window.clearTimeout(refreshTimer);
-      supabase.removeChannel(channel);
+      supabase.removeChannel(boardChannel);
+      supabase.removeChannel(assigneeChannel);
     };
   }, [loadBoard, workspaceId]);
 

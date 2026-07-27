@@ -1,14 +1,24 @@
 import { useEffect, useState } from 'react';
 import {
+  acknowledgeWorkspaceDeparture,
   addWorkspaceMember,
   changeWorkspaceMemberRole,
   deleteWorkspace,
   fetchWorkspaceContext,
+  leaveWorkspace,
   renameWorkspace,
   removeWorkspaceMember,
 } from '../services/workspaceService.js';
 
-export default function WorkspaceSettings({ isOpen, workspaceId, context, onClose, onContextChange, onDeleted }) {
+export default function WorkspaceSettings({
+  isOpen,
+  workspaceId,
+  context,
+  onClose,
+  onContextChange,
+  onDeleted,
+  onLeft,
+}) {
   const [targetEmail, setTargetEmail] = useState('');
   const [targetRole, setTargetRole] = useState('member');
   const [busy, setBusy] = useState(false);
@@ -19,14 +29,34 @@ export default function WorkspaceSettings({ isOpen, workspaceId, context, onClos
   const [deleteName, setDeleteName] = useState('');
   const [workspaceName, setWorkspaceName] = useState('');
   const [message, setMessage] = useState('');
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [successorUserId, setSuccessorUserId] = useState('');
   const isAdmin = ['admin', 'super_admin'].includes(context?.current_role);
   const adminCount = context?.members?.filter((member) => member.workspace_role_key === 'admin').length || 0;
+  const currentMembership = context?.members?.find((member) => member.is_current_user && !member.is_virtual);
+  const currentWorkspaceRole = currentMembership?.workspace_role_key;
+  const isCurrentWorkspaceAdmin = currentWorkspaceRole === 'admin';
+  const hasAnotherWorkspaceAdmin = (context?.members || []).some((member) => (
+    !member.is_current_user
+    && !member.is_virtual
+    && member.workspace_role_key === 'admin'
+    && member.global_role !== 'super_admin'
+  ));
+  const requiresAdminTransfer = isCurrentWorkspaceAdmin && !hasAnotherWorkspaceAdmin;
+  const leaveCandidates = (context?.members || []).filter((member) => (
+    !member.is_current_user
+    && !member.is_virtual
+    && member.global_role !== 'super_admin'
+  ));
+  const departureNotifications = context?.member_departures || [];
 
   useEffect(() => {
     if (!isOpen) return;
     setWorkspaceName(context?.workspace?.name || '');
     setMessage('');
     setError('');
+    setLeaveOpen(false);
+    setSuccessorUserId('');
     fetchWorkspaceContext(workspaceId)
       .then(onContextChange)
       .catch((err) => setError(err.message || 'Unable to refresh workspace settings.'));
@@ -87,6 +117,34 @@ export default function WorkspaceSettings({ isOpen, workspaceId, context, onClos
     if (success) setPendingKick(null);
   }
 
+  async function handleAcknowledgeDeparture(departureId) {
+    const success = await run(() => acknowledgeWorkspaceDeparture(workspaceId, departureId));
+    if (success) setMessage('Member activity dismissed.');
+  }
+
+  async function handleLeaveWorkspace(event) {
+    event.preventDefault();
+    if (busy || !currentMembership) return;
+    if (requiresAdminTransfer && !successorUserId) {
+      setError('Choose another member to become admin before leaving.');
+      return;
+    }
+
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      await leaveWorkspace(
+        workspaceId,
+        requiresAdminTransfer ? successorUserId : null
+      );
+      onLeft();
+    } catch (err) {
+      setError(err.message || 'Unable to leave this workspace.');
+      setBusy(false);
+    }
+  }
+
   async function copyCode() {
     await navigator.clipboard.writeText(context.workspace.join_code);
     setCopied(true);
@@ -113,6 +171,49 @@ export default function WorkspaceSettings({ isOpen, workspaceId, context, onClos
           <div><p className="modal-kicker">Workspace Settings</p><h2>{context.workspace.name}</h2></div>
           <button type="button" className="modal-close-button" onClick={onClose} disabled={busy}>×</button>
         </header>
+
+        {isAdmin && departureNotifications.length > 0 && (
+          <section className="settings-section member-activity-section">
+            <div className="settings-section-title">
+              <div>
+                <h3>Member activity</h3>
+                <p>People who recently left this workspace.</p>
+              </div>
+              <span className="activity-count">{departureNotifications.length}</span>
+            </div>
+            <div className="departure-list">
+              {departureNotifications.map((departure) => (
+                <article className="departure-row" key={departure.id}>
+                  <div className="member-avatar">
+                    {departure.display_name.slice(0, 1).toUpperCase()}
+                  </div>
+                  <div className="departure-copy">
+                    <strong>
+                      {departure.display_name}
+                      {departure.reason === 'account_deleted'
+                        ? ' deleted their account and left the workspace'
+                        : ' left the workspace'}
+                    </strong>
+                    <span>
+                      {departure.email} · was {departure.role_key}
+                    </span>
+                  </div>
+                  <time dateTime={departure.left_at}>
+                    {new Date(departure.left_at).toLocaleString()}
+                  </time>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => handleAcknowledgeDeparture(departure.id)}
+                    disabled={busy}
+                  >
+                    Dismiss
+                  </button>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
 
         {isAdmin && (
           <section className="settings-section">
@@ -185,6 +286,100 @@ export default function WorkspaceSettings({ isOpen, workspaceId, context, onClos
             })}
           </div>
         </section>
+
+        {currentMembership && (
+          <section className="settings-section leave-workspace-zone">
+            <div className="settings-section-title">
+              <div>
+                <h3>Leave workspace</h3>
+                <p>
+                  Your account leaves this workspace, but its board and data remain.
+                  {requiresAdminTransfer
+                    ? ' Transfer admin to another member before leaving.'
+                    : isCurrentWorkspaceAdmin
+                      ? ' Another admin will remain, so no transfer is needed.'
+                    : ''}
+                </p>
+              </div>
+              {!leaveOpen && (
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => setLeaveOpen(true)}
+                  disabled={busy}
+                >
+                  Leave workspace
+                </button>
+              )}
+            </div>
+
+            {leaveOpen && (
+              <form className="leave-workspace-form" onSubmit={handleLeaveWorkspace}>
+                {requiresAdminTransfer && (
+                  <>
+                    <label htmlFor="workspace-successor">
+                      New workspace admin
+                    </label>
+                    {leaveCandidates.length > 0 ? (
+                      <select
+                        id="workspace-successor"
+                        value={successorUserId}
+                        onChange={(event) => setSuccessorUserId(event.target.value)}
+                        disabled={busy}
+                        autoFocus
+                      >
+                        <option value="">Choose a member…</option>
+                        {leaveCandidates.map((member) => (
+                          <option key={member.user_id} value={member.user_id}>
+                            {member.display_name} — {member.email}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <p className="leave-blocked-copy">
+                        Add another member first. An admin cannot leave an empty
+                        workspace without deleting it.
+                      </p>
+                    )}
+                  </>
+                )}
+                {!isCurrentWorkspaceAdmin && (
+                  <p>You will need a new invite or join code to come back later.</p>
+                )}
+                {isCurrentWorkspaceAdmin && !requiresAdminTransfer && (
+                  <p>
+                    Another workspace admin will remain responsible for this
+                    workspace after you leave.
+                  </p>
+                )}
+                <div>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => {
+                      setLeaveOpen(false);
+                      setSuccessorUserId('');
+                    }}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="danger"
+                    disabled={
+                      busy
+                      || (requiresAdminTransfer
+                        && (!successorUserId || leaveCandidates.length === 0))
+                    }
+                  >
+                    {busy ? 'Leaving…' : 'Confirm leave'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </section>
+        )}
 
         {isAdmin && (
           <section className="settings-section danger-zone">

@@ -19,7 +19,7 @@ function readRoute() {
 }
 
 export default function RootApp() {
-  const { user, profile, loading: authLoading, error: authError, setProfile, logout, linkGoogleIdentity, getUserIdentities, unlinkIdentity } = useAuth();
+  const { user, profile, loading: authLoading, error: authError, setProfile, logout, linkGoogleIdentity, getUserIdentities, unlinkIdentity, deleteAccount } = useAuth();
   const [route, setRoute] = useState(readRoute);
   const [workspaceContext, setWorkspaceContext] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -80,6 +80,7 @@ export default function RootApp() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${workspaceId}` }, refreshContext)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${workspaceId}` }, refreshContext)
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'workspace_members' }, refreshContext)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'workspace_member_departures', filter: `workspace_id=eq.${workspaceId}` }, refreshContext)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'workspaces', filter: `id=eq.${workspaceId}` }, refreshContext)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'users' }, refreshContext)
       .subscribe((status, channelError) => {
@@ -99,17 +100,44 @@ export default function RootApp() {
     if (error || authError) return <PageState title="Unable to open this page" message={error || authError} onBack={() => navigate('/')} />;
 
     if (route.name === 'dashboard') return <UserDashboard profile={profile} onProfileChange={setProfile} onNavigate={navigate} onLogout={logout} />;
-    if (route.name === 'account') return <AccountPage profile={profile} onProfileChange={setProfile} onNavigate={navigate} onLogout={logout} onLinkGoogleIdentity={linkGoogleIdentity} onGetUserIdentities={getUserIdentities} onUnlinkIdentity={unlinkIdentity} />;
+    if (route.name === 'account') return <AccountPage profile={profile} onProfileChange={setProfile} onNavigate={navigate} onLogout={logout} onLinkGoogleIdentity={linkGoogleIdentity} onGetUserIdentities={getUserIdentities} onUnlinkIdentity={unlinkIdentity} onDeleteAccount={deleteAccount} />;
     if (route.name === 'workspace' && workspaceContext) return (
       <>
         <App key={route.workspaceId} workspaceId={route.workspaceId} workspaceContext={workspaceContext} onNavigate={navigate} onOpenSettings={() => setSettingsOpen(true)} />
-        <WorkspaceSettings isOpen={settingsOpen} workspaceId={route.workspaceId} context={workspaceContext} onClose={() => setSettingsOpen(false)} onContextChange={setWorkspaceContext} onDeleted={() => navigate('/')} />
+        <WorkspaceSettings
+          isOpen={settingsOpen}
+          workspaceId={route.workspaceId}
+          context={workspaceContext}
+          onClose={() => setSettingsOpen(false)}
+          onContextChange={setWorkspaceContext}
+          onDeleted={() => navigate('/')}
+          onLeft={() => navigate('/')}
+        />
       </>
     );
     return <PageState title="Page not found" message="Check the workspace URL." onBack={() => navigate('/')} />;
-  }, [authError, authLoading, error, getUserIdentities, linkGoogleIdentity, loading, logout, navigate, profile, route, setProfile, settingsOpen, unlinkIdentity, user, workspaceContext]);
+  }, [authError, authLoading, deleteAccount, error, getUserIdentities, linkGoogleIdentity, loading, logout, navigate, profile, route, setProfile, settingsOpen, unlinkIdentity, user, workspaceContext]);
 
-  return content;
+  const latestDeparture = workspaceContext?.member_departures?.[0];
+
+  return (
+    <>
+      {content}
+      {routeName === 'workspace' && latestDeparture && !settingsOpen && (
+        <div className="toast info workspace-activity-toast" role="status">
+          <span>
+            <strong>{latestDeparture.display_name}</strong>
+            {latestDeparture.reason === 'account_deleted'
+              ? ' deleted their account and left this workspace.'
+              : ' left this workspace.'}
+          </span>
+          <button type="button" onClick={() => setSettingsOpen(true)}>
+            Review
+          </button>
+        </div>
+      )}
+    </>
+  );
 }
 
 function PageState({ title, message, onBack }) {

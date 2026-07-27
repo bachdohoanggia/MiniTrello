@@ -9,7 +9,14 @@
 - Workspace Settings cannot demote or remove a global Super Admin.
 - Realtime uses the native Supabase `authenticated` JWT role and RLS.
 - Login Gmail changes through Google identity linking, with no transfer code.
+- Users can delete their own non-Super-Admin account from Account Settings.
+- Real members can leave a workspace without deleting it. Workspace admins
+  transfer admin only when no other real admin remains; virtual Super Admin
+  presence is never a transfer target.
+- Admins receive persistent, per-admin-dismissible activity when a member leaves.
 - Token refresh for the same Supabase UUID is silent when a tab regains focus.
+- Closing a tab preserves the session, while explicit sign-out/account deletion
+  forces Google's account chooser on the next login attempt.
 
 ## Supabase and Google setup
 
@@ -67,6 +74,36 @@ selecting a Gmail owned by another MiniTrello account, or disabled manual linkin
 After a new identity is connected, the Step 1 button disappears and the UI directs
 the user to choose the Gmail to keep.
 
+## Self-service account deletion
+
+Deploy the server-only function after applying `schema.sql`:
+
+```bash
+npx supabase@latest init # only when supabase/config.toml is missing
+npx supabase@latest login
+npx supabase@latest link --project-ref kzettvldsabiekawcryj
+npx supabase@latest functions deploy delete-account
+```
+
+GitHub/Vercel deploy only the browser application. Supabase Edge Functions use a
+separate deployment and therefore are not published by a normal Git push. After
+deployment, confirm that **Supabase Dashboard → Edge Functions** lists
+`delete-account`.
+
+Account Settings first calls `get_account_deletion_impact()` and requires the
+current login Gmail to be typed. The Edge Function verifies the bearer token and
+deletes only that token's `auth.users.id` with Auth Admin. The browser never
+receives the service-role key and cannot supply a target UUID.
+
+The database deletes single-user workspaces, preserves shared workspaces when
+another admin exists, and reassigns `created_by` when needed. It rejects deletion
+for the last admin of a shared workspace and for `global_role=super_admin`.
+Whenever deletion removes a real membership from a preserved shared workspace,
+the database records an `account_deleted` departure before deleting the profile.
+The admins and global Super Admins present at that moment receive the existing
+persistent, individually dismissible Realtime notification. A deleted personal
+workspace does not create a notification.
+
 ## Session restoration and tab focus
 
 `AuthContext` bootstraps the profile once per real Supabase user UUID. Repeated
@@ -78,6 +115,11 @@ silently without calling `ensure_current_user()` again.
 Therefore returning to a tab does not clear `workspaceContext`, display
 **Loading MiniTrello**, or rebuild Realtime channels. Initial workspace entry,
 workspace switching and real account switching still use full-screen loading.
+
+`AuthContext` stores a one-use local flag only when the user explicitly signs out
+or successfully deletes the account. The following Google OAuth request consumes
+that flag and sends `prompt=select_account`. Closing a tab does not create the
+flag, so the normal persisted Supabase session continues to restore silently.
 
 ## Promote a Super Admin
 
@@ -119,6 +161,9 @@ package, client configuration or Third-Party JWT workaround.
 | Google login/session/logout | `src/AuthContext.jsx` |
 | Authenticated routing | `src/RootApp.jsx` |
 | Account identity linking | `src/components/AccountPage.jsx` |
+| Account deletion UI | Danger Zone in `src/components/AccountPage.jsx` |
+| Auth user deletion | `supabase/functions/delete-account/index.ts` |
+| Shared-workspace deletion safety | `public.prepare_user_account_deletion` trigger |
 | Google identity verification | `public.select_google_login_identity` in `supabase/schema.sql` |
 | Automatic app profile | `public.handle_new_auth_user` trigger plus `ensure_current_user` |
 | Caller identity | `public.current_app_user()` → `auth.uid()` |

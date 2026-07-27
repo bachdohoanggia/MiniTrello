@@ -15,7 +15,10 @@ Production: [https://mini-trello-bice.vercel.app](https://mini-trello-bice.verce
 - Workspace `admin` and `member` roles
 - Global `super_admin` access to every workspace
 - Add members by Gmail
+- Leave a workspace without deleting its board; admins transfer control first
+- Persistent member-left activity notifications for workspace admins
 - Change login Gmail without changing the MiniTrello UUID, workspaces or roles
+- Delete the current account safely without opening the Supabase dashboard
 - Dynamic and draggable columns
 - Draggable tasks with desktop and touch support
 - Task search, priority, due date and multiple labels
@@ -46,6 +49,7 @@ src/
   supabaseClient.js            Browser Supabase client
 supabase/
   schema.sql                   Complete destructive development schema
+  functions/delete-account/   Authenticated server-side account deletion
 docs/
   AUTH_SUPER_ADMIN.md          Auth, identity linking and Super Admin details
   SYSTEM_DESIGN.md             Application architecture
@@ -66,6 +70,13 @@ Before setup, create or have access to:
 
 Only Supabase owns application sessions and users. Google Cloud supplies the
 Google OAuth identity. Vercel only hosts the React application.
+
+Supabase persists a normal session in browser storage, so closing and reopening a
+tab restores the same MiniTrello account automatically. After an explicit
+**Sign out** or successful account deletion, the next **Continue with Google**
+request adds Google's `prompt=select_account`; this lets the person choose a
+different Gmail instead of silently reusing the Chrome profile's last account.
+The chooser flag is consumed after that one login attempt.
 
 ## 1. Install the project
 
@@ -99,6 +110,7 @@ The schema creates:
 - authenticated RPC functions for all mutations;
 - RLS policies for members and Super Admin;
 - automatic public-profile creation for new Auth users;
+- safe account-deletion rules for personal and shared workspaces;
 - Realtime publication and replica identity configuration.
 
 Run this complete file during development while data can be reset. For an
@@ -321,6 +333,50 @@ A Super Admin:
 
 ## 9. Deploy to Vercel
 
+### 9.0 Deploy the account-deletion Edge Function
+
+Account deletion cannot run in browser code because deleting a Supabase Auth user
+requires a server-side secret. Deploy the committed Edge Function to the same
+Supabase project.
+
+Git push and Vercel deployment only publish the React frontend. They do **not**
+publish `supabase/functions/`. The account-deletion function is a separate
+server-side deployment hosted by Supabase.
+
+From the repository root, initialize the Supabase CLI configuration once if
+`supabase/config.toml` is missing:
+
+```bash
+npx supabase@latest init
+```
+
+Then authenticate, link this repository to the MiniTrello Supabase project and
+deploy the function:
+
+```bash
+npx supabase@latest login
+npx supabase@latest link --project-ref kzettvldsabiekawcryj
+npx supabase@latest functions deploy delete-account
+```
+
+Supabase-hosted Edge Functions receive `SUPABASE_URL`, `SUPABASE_ANON_KEY` and
+`SUPABASE_SERVICE_ROLE_KEY` as server-only environment variables. Do not copy the
+service-role key into React, `.env.local`, GitHub or Vercel.
+
+The function verifies the bearer token itself and only deletes the user ID from
+that token. The frontend cannot submit an arbitrary target user ID.
+
+After deployment, verify that **Supabase Dashboard → Edge Functions** contains
+`delete-account`. Reload MiniTrello and test with a disposable account. No Vercel
+redeployment is required when only this function is deployed.
+
+Deployment frequency:
+
+- React/UI change: push Git and let Vercel redeploy.
+- `supabase/schema.sql` change: apply the SQL to Supabase.
+- `supabase/functions/delete-account/index.ts` change: run the function deploy
+  command again.
+
 ### 9.1 Before pushing
 
 Run:
@@ -408,6 +464,27 @@ After deploying:
    showing full-screen **Loading MiniTrello**.
 8. Test Gmail identity linking only with a Google account that does not already
    own another MiniTrello account.
+9. With a disposable account, open **My Account → Delete account**, enter its
+   Gmail and confirm that it disappears from both `auth.users` and
+   `public.users`.
+
+## Account deletion behavior
+
+Deleting an account permanently removes its Supabase Auth login and public
+MiniTrello profile:
+
+- a workspace containing only that user is permanently deleted;
+- in a shared workspace with another admin, the user leaves and ownership is
+  reassigned when necessary;
+- remaining admins receive a persistent Realtime notification that the user
+  deleted their account and left; each admin dismisses their own copy;
+- deletion is blocked when the user is the last admin of a workspace that still
+  has other members;
+- a `super_admin` must first be demoted with privileged SQL.
+
+After a successful server deletion, MiniTrello also clears the browser session
+immediately. This matters because an already-issued access token can otherwise
+remain valid until it expires.
 
 ## Realtime architecture
 

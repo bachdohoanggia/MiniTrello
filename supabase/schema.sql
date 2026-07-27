@@ -1,10 +1,12 @@
--- MiniTrello multi-workspace schema v9 (Supabase Google Auth + global Super Admin)
+-- MiniTrello multi-workspace schema v16 (Supabase Google Auth + global Super Admin)
 -- WARNING: running this file deletes all existing MiniTrello data.
 -- Enable the Google provider in Supabase Authentication before signing in.
 
 create extension if not exists pgcrypto;
 
 drop table if exists public.account_login_transfers cascade;
+drop table if exists public.workspace_departure_reads cascade;
+drop table if exists public.workspace_member_departures cascade;
 drop table if exists public.task_assignees cascade;
 drop table if exists public.task_labels cascade;
 drop table if exists public.tasks cascade;
@@ -50,6 +52,26 @@ create table public.workspace_members (
   role_key text not null references public.roles(key),
   joined_at timestamptz not null default now(),
   primary key (workspace_id, user_id)
+);
+
+create table public.workspace_member_departures (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  departed_user_id uuid references public.users(id) on delete set null,
+  departed_display_name text not null,
+  departed_email text not null,
+  departed_role_key text not null check (departed_role_key in ('admin', 'member')),
+  departure_reason text not null default 'left_workspace'
+    check (departure_reason in ('left_workspace', 'account_deleted')),
+  successor_user_id uuid references public.users(id) on delete set null,
+  left_at timestamptz not null default now()
+);
+
+create table public.workspace_departure_reads (
+  departure_id uuid not null references public.workspace_member_departures(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
+  read_at timestamptz,
+  primary key (departure_id, user_id)
 );
 
 create table public.columns (
@@ -108,11 +130,38 @@ create table public.task_assignees (
 );
 
 create index workspace_members_user_idx on public.workspace_members(user_id);
+create index workspace_member_departures_workspace_left_idx
+  on public.workspace_member_departures(workspace_id, left_at desc);
+create index workspace_departure_reads_user_idx
+  on public.workspace_departure_reads(user_id, departure_id);
 create unique index users_email_lower_idx on public.users(lower(email));
 create index columns_workspace_position_idx on public.columns(workspace_id, position);
 create index tasks_workspace_column_position_idx on public.tasks(workspace_id, column_id, position);
 create index labels_workspace_name_idx on public.labels(workspace_id, name);
 create index task_assignees_workspace_user_idx on public.task_assignees(workspace_id, user_id);
+
+-- Always emit a task UPDATE after an assignee row changes. The board already
+-- subscribes to task updates, so this is an authoritative fallback for
+-- deployments where Postgres Changes does not deliver an assignee INSERT.
+create or replace function public.touch_task_after_assignee_change()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  changed_task_id uuid;
+begin
+  changed_task_id := case when tg_op = 'DELETE' then old.task_id else new.task_id end;
+
+  update public.tasks
+  set updated_at = clock_timestamp()
+  where id = changed_task_id;
+
+  return null;
+end;
+$$;
+
+drop trigger if exists touch_task_after_assignee_change_trigger on public.task_assignees;
+create trigger touch_task_after_assignee_change_trigger
+after insert or update or delete on public.task_assignees
+for each row execute function public.touch_task_after_assignee_change();
 
 create or replace function public.touch_updated_at()
 returns trigger language plpgsql as $$
@@ -161,6 +210,113 @@ $$;
 create trigger protect_last_workspace_admin_trigger
 before update of role_key or delete on public.workspace_members
 for each row execute function public.protect_last_workspace_admin();
+
+-- Account deletion is initiated by the authenticated delete-account Edge
+-- Function. This trigger keeps shared workspace data valid while auth.users
+-- cascades into public.users.
+create or replace function public.prepare_user_account_deletion()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  affected record;
+  replacement_admin uuid;
+  departure_event_id uuid;
+begin
+  if old.global_role = 'super_admin' then
+    raise exception 'Super Admin accounts must be demoted by a database operator before deletion';
+  end if;
+
+  for affected in
+    select
+      w.id,
+      w.name,
+      w.created_by,
+      wm.role_key,
+      (select count(*) from public.workspace_members all_members
+       where all_members.workspace_id = w.id) as member_count
+    from public.workspaces w
+    left join public.workspace_members wm
+      on wm.workspace_id = w.id and wm.user_id = old.id
+    where w.created_by = old.id or wm.user_id = old.id
+  loop
+    -- A personal workspace has no remaining owner or member to preserve.
+    if affected.member_count = 0
+      or (affected.member_count = 1 and affected.role_key is not null) then
+      perform set_config('minitrello.deleting_workspace', affected.id::text, true);
+      delete from public.workspaces where id = affected.id;
+      continue;
+    end if;
+
+    replacement_admin := null;
+
+    select member.user_id
+    into replacement_admin
+    from public.workspace_members member
+    where member.workspace_id = affected.id
+      and member.role_key = 'admin'
+      and member.user_id <> old.id
+    order by member.joined_at, member.user_id
+    limit 1;
+
+    if affected.role_key = 'admin' and replacement_admin is null then
+      raise exception 'Promote another admin in workspace "%" before deleting your account', affected.name;
+    end if;
+
+    if affected.created_by = old.id then
+      if replacement_admin is null then
+        raise exception 'Workspace "%" needs another admin before its creator can be deleted', affected.name;
+      end if;
+      update public.workspaces
+      set created_by = replacement_admin
+      where id = affected.id;
+    end if;
+
+    -- Deleting an account also removes its membership. Preserve that activity
+    -- for the admins who exist at deletion time before public.users cascades.
+    if affected.role_key is not null then
+      insert into public.workspace_member_departures(
+        workspace_id,
+        departed_user_id,
+        departed_display_name,
+        departed_email,
+        departed_role_key,
+        departure_reason,
+        successor_user_id
+      )
+      values (
+        affected.id,
+        old.id,
+        old.display_name,
+        old.email,
+        affected.role_key,
+        'account_deleted',
+        case when affected.role_key = 'admin' then replacement_admin else null end
+      )
+      returning id into departure_event_id;
+
+      insert into public.workspace_departure_reads(departure_id, user_id, read_at)
+      select departure_event_id, recipient.user_id, null
+      from (
+        select membership.user_id
+        from public.workspace_members membership
+        where membership.workspace_id = affected.id
+          and membership.role_key = 'admin'
+        union
+        select app_user.id
+        from public.users app_user
+        where app_user.global_role = 'super_admin'
+      ) recipient
+      where recipient.user_id <> old.id
+      on conflict (departure_id, user_id) do nothing;
+    end if;
+  end loop;
+
+  return old;
+end;
+$$;
+
+create trigger prepare_user_account_deletion_trigger
+before delete on public.users
+for each row execute function public.prepare_user_account_deletion();
 
 create or replace function public.validate_task_workspace()
 returns trigger language plpgsql as $$
@@ -250,6 +406,57 @@ begin
   if not public.is_super_admin() and not exists (
     select 1 from public.workspace_members where user_id = public.current_app_user() and workspace_id = p_workspace_id and role_key = 'admin'
   ) then raise exception 'Admin permission required'; end if;
+end;
+$$;
+
+create or replace function public.get_account_deletion_impact()
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  actor uuid := public.current_app_user();
+  result jsonb;
+begin
+  select jsonb_build_object(
+    'is_super_admin', u.global_role = 'super_admin',
+    'workspaces_to_delete', coalesce((
+      select jsonb_agg(jsonb_build_object('id', w.id, 'name', w.name) order by w.name)
+      from public.workspace_members mine
+      join public.workspaces w on w.id = mine.workspace_id
+      where mine.user_id = actor
+        and (select count(*) from public.workspace_members all_members
+             where all_members.workspace_id = w.id) = 1
+    ), '[]'::jsonb),
+    'workspaces_to_leave', coalesce((
+      select jsonb_agg(jsonb_build_object('id', w.id, 'name', w.name) order by w.name)
+      from public.workspace_members mine
+      join public.workspaces w on w.id = mine.workspace_id
+      where mine.user_id = actor
+        and (select count(*) from public.workspace_members all_members
+             where all_members.workspace_id = w.id) > 1
+    ), '[]'::jsonb),
+    'blocked_workspaces', coalesce((
+      select jsonb_agg(jsonb_build_object('id', w.id, 'name', w.name) order by w.name)
+      from public.workspace_members mine
+      join public.workspaces w on w.id = mine.workspace_id
+      where mine.user_id = actor
+        and mine.role_key = 'admin'
+        and exists (
+          select 1 from public.workspace_members other_member
+          where other_member.workspace_id = w.id
+            and other_member.user_id <> actor
+        )
+        and not exists (
+          select 1 from public.workspace_members other_admin
+          where other_admin.workspace_id = w.id
+            and other_admin.user_id <> actor
+            and other_admin.role_key = 'admin'
+        )
+    ), '[]'::jsonb)
+  )
+  into result
+  from public.users u
+  where u.id = actor;
+
+  return result;
 end;
 $$;
 
@@ -343,7 +550,26 @@ begin
     into members from public.users u where u.id = actor;
   end if;
   select jsonb_build_object('workspace', to_jsonb(w), 'current_role', case when actor_is_super then 'super_admin' else wm.role_key end,
-    'is_super_admin', actor_is_super, 'members', members, 'user_workspaces', coalesce((
+    'is_super_admin', actor_is_super, 'members', members,
+    'member_departures', case when actor_is_super or wm.role_key = 'admin' then coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', departure.id,
+        'departed_user_id', departure.departed_user_id,
+        'display_name', departure.departed_display_name,
+        'email', departure.departed_email,
+        'role_key', departure.departed_role_key,
+        'reason', departure.departure_reason,
+        'successor_user_id', departure.successor_user_id,
+        'left_at', departure.left_at
+      ) order by departure.left_at desc)
+      from public.workspace_member_departures departure
+      join public.workspace_departure_reads departure_read
+        on departure_read.departure_id = departure.id
+       and departure_read.user_id = actor
+       and departure_read.read_at is null
+      where departure.workspace_id = p_workspace_id
+    ), '[]'::jsonb) else '[]'::jsonb end,
+    'user_workspaces', coalesce((
       select jsonb_agg(jsonb_build_object('id', x.id, 'name', x.name, 'role_key', x.effective_role) order by x.name) from (
         select uw.id, uw.name, case when actor_is_super then 'super_admin' else um.role_key end effective_role
         from public.workspaces uw left join public.workspace_members um on um.workspace_id = uw.id and um.user_id = actor
@@ -479,6 +705,159 @@ begin
     raise exception 'A workspace must keep at least one admin';
   end if;
   delete from public.workspace_members where workspace_id = p_workspace_id and user_id = p_target_user_id;
+end;
+$$;
+
+create or replace function public.leave_workspace(
+  p_workspace_id uuid,
+  p_successor_user_id uuid default null
+)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  actor uuid := public.current_app_user();
+  actor_role text;
+  actor_name text;
+  actor_email text;
+  successor_name text;
+  effective_successor_user_id uuid;
+  departure_event_id uuid;
+begin
+  perform 1 from public.workspaces where id = p_workspace_id for update;
+  if not found then raise exception 'Workspace not found'; end if;
+
+  select membership.role_key, app_user.display_name, app_user.email
+  into actor_role, actor_name, actor_email
+  from public.workspace_members membership
+  join public.users app_user on app_user.id = membership.user_id
+  where membership.workspace_id = p_workspace_id
+    and membership.user_id = actor;
+
+  if actor_role is null then
+    raise exception 'You are not a member of this workspace';
+  end if;
+
+  if actor_role = 'admin' then
+    -- Prefer an admin who already exists. A handoff is required only when the
+    -- caller is the final workspace admin.
+    select membership.user_id, app_user.display_name
+    into effective_successor_user_id, successor_name
+    from public.workspace_members membership
+    join public.users app_user on app_user.id = membership.user_id
+    where membership.workspace_id = p_workspace_id
+      and membership.user_id <> actor
+      and membership.role_key = 'admin'
+      and app_user.global_role <> 'super_admin'
+    order by membership.joined_at, membership.user_id
+    limit 1;
+
+    if effective_successor_user_id is null then
+      if p_successor_user_id is null then
+        raise exception 'Choose another workspace member to become admin before leaving';
+      end if;
+      if p_successor_user_id = actor then
+        raise exception 'Choose another member, not your current account';
+      end if;
+
+      select app_user.display_name
+      into successor_name
+      from public.workspace_members membership
+      join public.users app_user on app_user.id = membership.user_id
+      where membership.workspace_id = p_workspace_id
+        and membership.user_id = p_successor_user_id
+        and app_user.global_role <> 'super_admin';
+
+      if successor_name is null then
+        raise exception 'The new admin must be a real member of this workspace';
+      end if;
+
+      effective_successor_user_id := p_successor_user_id;
+
+      update public.workspace_members
+      set role_key = 'admin'
+      where workspace_id = p_workspace_id
+        and user_id = effective_successor_user_id;
+    end if;
+
+    update public.workspaces
+    set created_by = effective_successor_user_id
+    where id = p_workspace_id
+      and created_by = actor;
+  elsif p_successor_user_id is not null then
+    raise exception 'Members can leave without transferring admin';
+  end if;
+
+  insert into public.workspace_member_departures(
+    workspace_id,
+    departed_user_id,
+    departed_display_name,
+    departed_email,
+    departed_role_key,
+    departure_reason,
+    successor_user_id
+  )
+  values (
+    p_workspace_id,
+    actor,
+    actor_name,
+    actor_email,
+    actor_role,
+    'left_workspace',
+    case when actor_role = 'admin' then effective_successor_user_id else null end
+  )
+  returning id into departure_event_id;
+
+  -- Freeze the audience at event time. Admins promoted or re-added later must
+  -- not inherit old notices (especially a notice about their own earlier exit).
+  insert into public.workspace_departure_reads(departure_id, user_id, read_at)
+  select departure_event_id, recipient.user_id, null
+  from (
+    select membership.user_id
+    from public.workspace_members membership
+    where membership.workspace_id = p_workspace_id
+      and membership.role_key = 'admin'
+    union
+    select app_user.id
+    from public.users app_user
+    where app_user.global_role = 'super_admin'
+  ) recipient
+  where recipient.user_id <> actor
+  on conflict (departure_id, user_id) do nothing;
+
+  delete from public.workspace_members
+  where workspace_id = p_workspace_id
+    and user_id = actor;
+
+  return jsonb_build_object(
+    'workspace_id', p_workspace_id,
+    'departed_role', actor_role,
+    'successor_user_id', case when actor_role = 'admin' then effective_successor_user_id else null end,
+    'successor_name', successor_name
+  );
+end;
+$$;
+
+create or replace function public.acknowledge_workspace_departure(
+  p_workspace_id uuid,
+  p_departure_id uuid
+)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  actor uuid := public.current_app_user();
+begin
+  perform public.assert_workspace_admin_or_super_admin(p_workspace_id);
+
+  update public.workspace_departure_reads departure_read
+  set read_at = now()
+  from public.workspace_member_departures departure
+  where departure_read.departure_id = p_departure_id
+    and departure_read.user_id = actor
+    and departure_read.read_at is null
+    and departure.id = departure_read.departure_id
+    and departure.workspace_id = p_workspace_id;
+
+  if not found then
+    raise exception 'Workspace departure notification not found';
+  end if;
 end;
 $$;
 
@@ -660,6 +1039,8 @@ alter table public.users enable row level security;
 alter table public.roles enable row level security;
 alter table public.workspaces enable row level security;
 alter table public.workspace_members enable row level security;
+alter table public.workspace_member_departures enable row level security;
+alter table public.workspace_departure_reads enable row level security;
 alter table public.columns enable row level security;
 alter table public.tasks enable row level security;
 alter table public.labels enable row level security;
@@ -670,6 +1051,8 @@ alter table public.task_assignees enable row level security;
 alter table public.users replica identity full;
 alter table public.workspaces replica identity full;
 alter table public.workspace_members replica identity full;
+alter table public.workspace_member_departures replica identity full;
+alter table public.workspace_departure_reads replica identity full;
 alter table public.columns replica identity full;
 alter table public.tasks replica identity full;
 alter table public.labels replica identity full;
@@ -685,6 +1068,19 @@ create policy "Read accessible workspaces" on public.workspaces for select to au
   using (public.can_access_workspace(id));
 create policy "Read accessible memberships" on public.workspace_members for select to authenticated
   using (public.can_access_workspace(workspace_id));
+create policy "Admins read workspace departures" on public.workspace_member_departures for select to authenticated
+  using (
+    public.is_super_admin()
+    or exists (
+      select 1
+      from public.workspace_members membership
+      where membership.workspace_id = workspace_member_departures.workspace_id
+        and membership.user_id = auth.uid()
+        and membership.role_key = 'admin'
+    )
+  );
+create policy "Read own workspace departure acknowledgements" on public.workspace_departure_reads for select to authenticated
+  using (user_id = auth.uid());
 create policy "Read accessible columns" on public.columns for select to authenticated
   using (public.can_access_workspace(workspace_id));
 create policy "Read accessible tasks" on public.tasks for select to authenticated
@@ -696,16 +1092,18 @@ create policy "Read accessible task labels" on public.task_labels for select to 
 create policy "Read accessible task assignees" on public.task_assignees for select to authenticated
   using (public.can_access_workspace(workspace_id));
 
-revoke insert, update, delete on public.users, public.roles, public.workspaces, public.workspace_members, public.columns, public.tasks, public.labels, public.task_labels, public.task_assignees from anon, authenticated;
-revoke all on public.users, public.roles, public.workspaces, public.workspace_members, public.columns, public.tasks, public.labels, public.task_labels, public.task_assignees from anon;
-grant select on public.users, public.roles, public.workspaces, public.workspace_members, public.columns, public.tasks, public.labels, public.task_labels, public.task_assignees to authenticated;
+revoke insert, update, delete on public.users, public.roles, public.workspaces, public.workspace_members, public.workspace_member_departures, public.workspace_departure_reads, public.columns, public.tasks, public.labels, public.task_labels, public.task_assignees from anon, authenticated;
+revoke all on public.users, public.roles, public.workspaces, public.workspace_members, public.workspace_member_departures, public.workspace_departure_reads, public.columns, public.tasks, public.labels, public.task_labels, public.task_assignees from anon;
+grant select on public.users, public.roles, public.workspaces, public.workspace_members, public.workspace_member_departures, public.workspace_departure_reads, public.columns, public.tasks, public.labels, public.task_labels, public.task_assignees to authenticated;
 
 revoke execute on all functions in schema public from public, anon;
 grant execute on function public.ensure_current_user(), public.get_user_dashboard(),
   public.select_google_login_identity(text),
+  public.get_account_deletion_impact(),
   public.get_workspace_context(uuid), public.get_workspace_board(uuid), public.create_workspace(text),
   public.rename_workspace(uuid, text), public.join_workspace(text), public.add_workspace_member(uuid, text, text),
   public.change_workspace_member_role(uuid, uuid, text), public.remove_workspace_member(uuid, uuid),
+  public.leave_workspace(uuid, uuid), public.acknowledge_workspace_departure(uuid, uuid),
   public.delete_workspace(uuid), public.update_user_profile(text), public.workspace_board_command(uuid, text, jsonb)
   to authenticated;
 grant execute on function public.current_app_user(), public.is_super_admin(), public.can_access_workspace(uuid)
@@ -714,7 +1112,7 @@ grant execute on function public.current_app_user(), public.is_super_admin(), pu
 do $$
 declare table_name text;
 begin
-  foreach table_name in array array['users','workspaces','workspace_members','columns','tasks','labels','task_labels','task_assignees'] loop
+  foreach table_name in array array['users','workspaces','workspace_members','workspace_member_departures','columns','tasks','labels','task_labels','task_assignees'] loop
     begin
       execute format('alter publication supabase_realtime add table public.%I', table_name);
     exception when duplicate_object then null;

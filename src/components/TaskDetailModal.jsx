@@ -57,8 +57,17 @@ export default function TaskDetailModal({
   const [formData, setFormData] = useState(emptyTask);
   const [draftLabelIds, setDraftLabelIds] = useState([]);
   const [draftAssigneeIds, setDraftAssigneeIds] = useState([]);
+  const [areAssigneesDirty, setAreAssigneesDirty] = useState(false);
   const [newLabelName, setNewLabelName] = useState('');
   const [newLabelColor, setNewLabelColor] = useState('#2563eb');
+  const remoteAssigneeIds = useMemo(
+    () => taskAssignees
+      .filter((item) => item.task_id === task?.id)
+      .map((item) => item.user_id)
+      .sort(),
+    [task?.id, taskAssignees]
+  );
+  const remoteAssigneeSignature = remoteAssigneeIds.join(',');
 
   useEffect(() => {
     if (!task) return;
@@ -80,9 +89,15 @@ export default function TaskDetailModal({
         .filter((item) => item.task_id === task.id)
         .map((item) => item.user_id)
     );
+    setAreAssigneesDirty(false);
     setNewLabelName('');
     setNewLabelColor('#2563eb');
   }, [task?.id]);
+
+  useEffect(() => {
+    if (!task || areAssigneesDirty) return;
+    setDraftAssigneeIds(remoteAssigneeIds);
+  }, [task?.id, remoteAssigneeSignature, areAssigneesDirty]);
 
   useEffect(() => {
     const availableLabelIds = new Set(labels.map((label) => label.id));
@@ -131,6 +146,11 @@ export default function TaskDetailModal({
         ? current.filter((id) => id !== labelId)
         : [...current, labelId]
     ));
+  }
+
+  function handleAssigneesChange(nextAssigneeIds) {
+    setAreAssigneesDirty(true);
+    setDraftAssigneeIds(nextAssigneeIds);
   }
 
   async function handleCreateLabel(event) {
@@ -211,7 +231,7 @@ export default function TaskDetailModal({
               <MemberPicker
                 members={members}
                 selectedIds={draftAssigneeIds}
-                onChange={setDraftAssigneeIds}
+                onChange={handleAssigneesChange}
                 disabled={isBusy}
               />
             </div>

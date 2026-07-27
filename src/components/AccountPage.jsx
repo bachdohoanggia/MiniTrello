@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  fetchAccountDeletionImpact,
   fetchUserDashboard,
   selectGoogleLoginIdentity,
   updateUserProfile,
@@ -36,12 +37,16 @@ export default function AccountPage({
   onLinkGoogleIdentity,
   onGetUserIdentities,
   onUnlinkIdentity,
+  onDeleteAccount,
 }) {
   const [name, setName] = useState(profile.display_name);
   const [identities, setIdentities] = useState([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteImpact, setDeleteImpact] = useState(null);
+  const [deleteEmail, setDeleteEmail] = useState('');
   const hasNewGoogleIdentity = identities.some(
     (identity) => identityEmail(identity).toLowerCase() !== profile.email.toLowerCase(),
   );
@@ -123,6 +128,48 @@ export default function AccountPage({
     } finally { setBusy(false); }
   }
 
+  async function handleOpenDelete() {
+    if (busy) return;
+    setDeleteOpen(true);
+    setDeleteImpact(null);
+    setDeleteEmail('');
+    setBusy(true); setError(''); setMessage('');
+    try {
+      setDeleteImpact(await fetchAccountDeletionImpact());
+    } catch (err) {
+      setError(err.message || 'Unable to check whether this account can be deleted.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleCancelDelete() {
+    if (busy) return;
+    setDeleteOpen(false);
+    setDeleteImpact(null);
+    setDeleteEmail('');
+    setError('');
+  }
+
+  async function handleDeleteAccount(event) {
+    event.preventDefault();
+    const confirmationEmail = deleteEmail.trim();
+    if (busy || confirmationEmail.toLowerCase() !== profile.email.toLowerCase()) return;
+    setBusy(true); setError(''); setMessage('');
+    try {
+      await onDeleteAccount(confirmationEmail);
+      window.location.replace('/login');
+    } catch (err) {
+      setError(err.message || 'Unable to delete your account.');
+      setBusy(false);
+    }
+  }
+
+  const blockedWorkspaces = deleteImpact?.blocked_workspaces || [];
+  const workspacesToDelete = deleteImpact?.workspaces_to_delete || [];
+  const workspacesToLeave = deleteImpact?.workspaces_to_leave || [];
+  const deletionBlocked = Boolean(deleteImpact?.is_super_admin || blockedWorkspaces.length);
+
   return (
     <main className="portal-shell account-shell">
       <button type="button" className="portal-back" onClick={() => onNavigate('/')}>← Back to workspaces</button>
@@ -175,6 +222,86 @@ export default function AccountPage({
             })}
           </div>
         </div>
+
+        <div className="account-divider" />
+        <section className="account-delete-zone">
+          <div>
+            <p className="eyebrow">Danger zone</p>
+            <h2>Delete account</h2>
+            <p className="account-note">
+              Permanently remove this MiniTrello account, its login, memberships and personal workspaces.
+              This cannot be undone.
+            </p>
+          </div>
+
+          {!deleteOpen ? (
+            <button type="button" className="danger" onClick={handleOpenDelete} disabled={busy}>
+              Delete my account
+            </button>
+          ) : (
+            <form className="account-delete-confirmation" onSubmit={handleDeleteAccount}>
+              {busy && !deleteImpact ? <p className="account-note">Checking your workspaces…</p> : null}
+
+              {deleteImpact?.is_super_admin ? (
+                <div className="account-delete-blocker">
+                  Super Admin accounts cannot delete themselves. A database operator must demote this
+                  account first.
+                </div>
+              ) : null}
+
+              {blockedWorkspaces.length > 0 ? (
+                <div className="account-delete-blocker">
+                  <strong>Another admin is required before deletion.</strong>
+                  <p>Promote a member to admin in: {blockedWorkspaces.map((workspace) => workspace.name).join(', ')}.</p>
+                </div>
+              ) : null}
+
+              {deleteImpact && !deletionBlocked ? (
+                <div className="account-delete-impact">
+                  {workspacesToDelete.length > 0 && (
+                    <p><strong>{workspacesToDelete.length}</strong> personal workspace(s) will be permanently deleted.</p>
+                  )}
+                  {workspacesToLeave.length > 0 && (
+                    <p>You will leave <strong>{workspacesToLeave.length}</strong> shared workspace(s); their data will remain.</p>
+                  )}
+                  {workspacesToDelete.length === 0 && workspacesToLeave.length === 0 && (
+                    <p>This account has no workspace data.</p>
+                  )}
+                </div>
+              ) : null}
+
+              {!deletionBlocked && deleteImpact ? (
+                <label>
+                  Type <strong>{profile.email}</strong> to confirm
+                  <input
+                    type="email"
+                    autoComplete="off"
+                    value={deleteEmail}
+                    onChange={(event) => setDeleteEmail(event.target.value)}
+                    placeholder={profile.email}
+                    disabled={busy}
+                  />
+                </label>
+              ) : null}
+
+              <div className="account-delete-actions">
+                <button type="button" className="secondary" onClick={handleCancelDelete} disabled={busy}>
+                  Cancel
+                </button>
+                {!deletionBlocked && deleteImpact ? (
+                  <button
+                    type="submit"
+                    className="danger"
+                    disabled={busy || deleteEmail.trim().toLowerCase() !== profile.email.toLowerCase()}
+                  >
+                    {busy ? 'Deleting…' : 'Delete account forever'}
+                  </button>
+                ) : null}
+              </div>
+            </form>
+          )}
+        </section>
+
         <button type="button" className="secondary" onClick={onLogout}>Sign out</button>
       </section>
     </main>

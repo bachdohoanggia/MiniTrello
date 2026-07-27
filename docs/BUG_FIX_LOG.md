@@ -1,5 +1,83 @@
 # MiniTrello - Feature and Bug Fix Log
 
+## v16 - Account deletion notifies remaining workspace admins
+
+- Deleting an account now creates a persistent departure event for every shared
+  workspace whose membership disappears during deletion.
+- The event stores the deleted user's name, Gmail and former workspace role
+  before the profile is removed, so the notification remains understandable
+  after `departed_user_id` becomes `null`.
+- Notification recipients are frozen to the workspace admins and global Super
+  Admins present at deletion time. Later promotions or invitations do not
+  inherit the historical notification.
+- Personal one-user workspaces are deleted without producing a departure
+  notification because no workspace or admin remains to receive it.
+- The UI distinguishes this event as **deleted their account and left the
+  workspace**, while keeping the same Realtime and per-admin Dismiss behavior.
+
+## v15 - Admin handoff only when leaving as the final admin
+
+- An admin can now leave immediately when another real workspace admin remains.
+- Selecting a successor is required only when the departing user is the final
+  admin. The selected member is promoted before the departure.
+- If the departing user owns `workspaces.created_by`, PostgreSQL automatically
+  transfers that technical ownership to an existing admin, so workspace data is
+  preserved without asking for a redundant handoff.
+
+## v14 - Departure notifications use a fixed recipient list
+
+- Fixed a former member seeing the notification for their own old departure
+  after they were invited back and later promoted to admin.
+- `leave_workspace` now snapshots the notification recipients at departure
+  time. Only admins and global Super Admins who held that responsibility at
+  that moment receive the event.
+- Promoting or re-adding an admin later does not expose historical departure
+  notices. When an admin transfers their role and leaves, the successor is
+  promoted before recipients are captured, so the successor receives that new
+  departure notice.
+- `workspace_departure_reads` now doubles as the recipient inbox: a row with
+  `read_at = null` is unread, and Dismiss sets its timestamp.
+
+## v13 - Self-service workspace leaving and admin handoff
+
+- Added **Leave workspace** for every real workspace member. Leaving removes only
+  that user's membership and task assignments; the workspace, board and tasks
+  remain.
+- A member can leave immediately. An admin must select another real member in
+  the same transaction; that member is promoted to admin before the current
+  admin membership is removed.
+- When the departing admin is also `workspaces.created_by`, creator ownership is
+  transferred to the selected successor instead of deleting workspace data.
+- Added persistent `workspace_member_departures` events with display-name,
+  Gmail and previous-role snapshots. Admins receive a Realtime notice even when
+  the departure happened while they were offline.
+- Added per-admin `workspace_departure_reads`, so dismissing an activity notice
+  does not hide it from another admin.
+- Virtual Super Admin presence cannot be selected as a successor and cannot
+  leave a workspace in which it has no real membership.
+
+## v12 - Safe self-service account deletion
+
+- Added an Account Settings Danger Zone so a signed-in user can permanently
+  delete their own MiniTrello and Supabase Auth account without opening the
+  Supabase dashboard.
+- Added `get_account_deletion_impact()` so the UI explains which personal
+  workspaces will be deleted, which shared workspaces will be left, and which
+  workspace still needs another admin.
+- Added the `prepare_user_account_deletion` database trigger. A one-person
+  workspace is deleted, shared workspace ownership moves to another admin, and
+  membership/assignee rows cascade away with the deleted profile.
+- Deletion is rejected when the user is the final admin of a shared workspace or
+  has `global_role=super_admin`.
+- Added the authenticated `delete-account` Supabase Edge Function. It derives the
+  deletion target from the caller's bearer token, compares the typed Gmail to the
+  public profile, and keeps the service-role key out of React and Vercel.
+- The browser clears its local Supabase session immediately after server deletion
+  so an already-issued JWT is not left active until expiration.
+- Explicit sign-out and successful account deletion now mark the next Google
+  OAuth request with `prompt=select_account`, allowing a different Gmail to be
+  selected. Normal tab close/reopen still restores the persisted session.
+
 ## v11 - Task assignees / Members
 
 - Added the `task_assignees` many-to-many table with composite foreign keys to
@@ -17,6 +95,10 @@
 - Published `task_assignees` to Realtime with full replica identity. Insert and
   update events are workspace-filtered; delete events are unfiltered so other
   sessions immediately see unassign and member-removal changes.
+- Fixed open Task Detail modals keeping their initial assignee draft after a
+  remote change. Realtime assignment rows now update the board state directly,
+  and an open modal adopts remote assignees unless that user has started a local
+  unsaved assignee edit.
 - Assignment never filters task visibility and survives Trash/restore. Deleting a
   task or kicking a member removes related assignments through cascading foreign
   keys.
@@ -1002,13 +1084,6 @@ export async function fetchTasks() {
 v1 created the foundation: React component structure, Supabase database connection, dynamic columns, task CRUD, and realtime updates.
 
 ---
-
-
-
-
-
-
-
 
 
 
