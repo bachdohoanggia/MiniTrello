@@ -33,11 +33,11 @@ This project is live at [mini-trello-bice.vercel.app](https://mini-trello-bice.v
 
 Screenshot:
 
-![Login demo](dist/Login.png)
+![Login demo](docs/images/Login.png)
 
-![DashBoard demo](dist/Dashboard.png)
+![Dashboard demo](docs/images/Dashboard.png)
 
-![Workspace demo](dist/Workspace.png)
+![Workspace demo](docs/images/Workspace.png)
 
 ## Technology
 
