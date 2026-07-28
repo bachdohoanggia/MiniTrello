@@ -27,6 +27,18 @@ Production: [https://mini-trello-bice.vercel.app](https://mini-trello-bice.verce
 - Supabase Realtime updates between browsers and devices
 - Responsive login, dashboard and board interfaces
 
+
+# Demo
+This project is live at [mini-trello-bice.vercel.app](https://mini-trello-bice.vercel.app/)
+
+Screenshot:
+
+![Login demo](dist/Login.png)
+
+![DashBoard demo](dist/Dashboard.png)
+
+![Workspace demo](dist/Workspace.png)
+
 ## Technology
 
 | Layer | Technology |
