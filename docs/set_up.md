@@ -1,4 +1,4 @@
-# Set up doc
+# Set up
 
 To set up and run this project locally or deploy the project, please refer to docs/set_up.md.
 
