@@ -8,7 +8,7 @@ Production: [https://mini-trello-bice.vercel.app](https://mini-trello-bice.verce
 
 I built MiniTrello out of a simple need during my school projects and my hackathons when working with my teammates. While Trello is clean, it lacks simple essentials like multi-member task assignments and flexible workspace roles. Enterprise tools like Jira have those features, but their heavy, slow interfaces drag team momentum down.
 
-MiniTrello gives you the best of both worlds. It’s super fast, updates instantly for everyone on the team, and gives you just the right tools—like multi-person assignments, live updates, and simple account management—without any of the clutter.
+MiniTrello gives you the best of both worlds. It’s super fast, updates instantly for everyone on the team, and gives you just the right tools like multi-person assignments, live updates, and simple account management without any of the clutter.
 
 ## Main features
 
