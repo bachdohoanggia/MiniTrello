@@ -76,7 +76,8 @@ export default function RichTextEditor({
   }
 
   function applyLink(event) {
-    event.preventDefault();
+    event?.preventDefault();
+    event?.stopPropagation();
     const href = normalizeLink(linkUrl);
     if (!href) return;
 
@@ -96,6 +97,30 @@ export default function RichTextEditor({
     emitChange();
     setLinkOpen(false);
     setLinkUrl('');
+  }
+
+  function handleLinkInputKeyDown(event) {
+    if (event.key === 'Enter') {
+      applyLink(event);
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setLinkOpen(false);
+    }
+  }
+
+  function handleEditorClick(event) {
+    const anchor = event.target.closest?.('a');
+    if (!anchor || !editorRef.current?.contains(anchor)) return;
+
+    const href = normalizeLink(anchor.getAttribute('href'));
+    if (!href) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    window.open(href, '_blank', 'noopener,noreferrer');
   }
 
   function handlePaste(event) {
@@ -153,7 +178,7 @@ export default function RichTextEditor({
       </div>
 
       {linkOpen && (
-        <form className="rich-text-link-form" onSubmit={applyLink}>
+        <div className="rich-text-link-form">
           <input
             autoFocus
             type="text"
@@ -162,10 +187,11 @@ export default function RichTextEditor({
             onChange={(event) => setLinkUrl(event.target.value)}
             placeholder="https://example.com"
             aria-label="Link URL"
+            onKeyDown={handleLinkInputKeyDown}
           />
-          <button type="submit" disabled={!linkUrl.trim()}>Apply</button>
+          <button type="button" onClick={applyLink} disabled={!linkUrl.trim()}>Apply</button>
           <button type="button" className="secondary" onClick={() => setLinkOpen(false)}>Cancel</button>
-        </form>
+        </div>
       )}
 
       <div
@@ -182,6 +208,7 @@ export default function RichTextEditor({
         onBlur={emitChange}
         onKeyUp={rememberSelection}
         onMouseUp={rememberSelection}
+        onClick={handleEditorClick}
       />
     </div>
   );

@@ -871,6 +871,7 @@ h1 {
 
 .rich-text-content a {
   color: #93c5fd;
+  cursor: pointer;
   text-decoration: underline;
 }
 
